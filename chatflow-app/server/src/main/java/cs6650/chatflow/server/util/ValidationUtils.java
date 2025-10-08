@@ -23,6 +23,12 @@ public final class ValidationUtils {
      * @return null if valid, else error message string from ChatConstants.
      */
     public static String validate(ChatCommand cmd) {
+        // Validate message ID
+        String messageIdValidation = validateMessageId(cmd.getMessageId());
+        if (messageIdValidation != null) {
+            return messageIdValidation;
+        }
+
         // Validate user ID
         String userIdValidation = validateUserId(cmd.getUserId());
         if (userIdValidation != null) {
@@ -140,6 +146,24 @@ public final class ValidationUtils {
                 return ChatConstants.ERROR_INVALID_TIMESTAMP;
             }
         }
+    }
+
+    /**
+     * Validates the message ID field.
+     * @param messageId Message ID string to validate.
+     * @return null if valid, else error message from ChatConstants.
+     */
+    public static String validateMessageId(String messageId) {
+        if (messageId == null || messageId.trim().isEmpty()) {
+            return "MessageId invalid";
+        }
+
+        // Basic UUID format validation (simplified)
+        if (messageId.length() < 10) {
+            return "MessageId invalid";
+        }
+
+        return null;
     }
 
     /**

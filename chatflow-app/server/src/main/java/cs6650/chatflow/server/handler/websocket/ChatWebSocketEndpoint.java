@@ -25,22 +25,33 @@ public class ChatWebSocketEndpoint {
 
     @OnOpen
     public void onOpen(Session session, @PathParam("roomId") String roomId) {
-        logger.info("Session {} opened for room {}", session.getId(), roomId);
+        logger.info("WebSocket connected - session: {}, room: {}", session.getId(), roomId);
     }
 
     @OnMessage
-    public void onMessage(Session session, String msgJson, @PathParam("roomId") String roomId) throws IOException {
+    public void onMessage(Session session, String msgJson, @PathParam("roomId") String roomId) {
         try {
             ChatCommand command = gson.fromJson(msgJson, ChatCommand.class);
+
+            // Store userId in session user properties for logging
+            if (command.getUserId() != null) {
+                session.getUserProperties().put("userId", command.getUserId());
+            }
+
+            logger.debug("Received message from session {}, user {}, messageId: {}",
+                session.getId(), command.getUserId(), command.getMessageId());
+
             String validationError = ValidationUtils.validate(command);
             if (validationError != null) {
-                logger.warn("Validation failed for session {}: {}", session.getId(), validationError);
-                session.getBasicRemote().sendText("{\"error\":\"" + validationError + "\"}");
+                logger.warn("Validation failed - session: {}, user: {}, error: {}",
+                    session.getId(), command.getUserId(), validationError);
+                sendTextSafe(session, "{\"error\":\"" + validationError + "\"}");
                 return;
             }
 
             ChatEventResponse response = new ChatEventResponse();
             // Copy fields from command
+            response.setMessageId(command.getMessageId());
             response.setUserId(command.getUserId());
             response.setUsername(command.getUsername());
             response.setMessage(command.getMessage());
@@ -51,25 +62,68 @@ public class ChatWebSocketEndpoint {
             response.setServerTimestamp(Instant.now().toString());
             response.setStatus(ChatConstants.STATUS_OK);
 
-            session.getBasicRemote().sendText(gson.toJson(response));
-            logger.info("Sent response to session {}: {}", session.getId(), response.getMessage());
+            sendTextSafe(session, gson.toJson(response));
+            logger.info("Message processed - session: {}, user: {}, messageId: {}",
+                session.getId(), command.getUserId(), response.getMessageId());
+
         } catch (JsonSyntaxException e) {
-            logger.error("Invalid JSON from session {}: {}", session.getId(), e.getMessage());
-            session.getBasicRemote().sendText("{\"error\":\"" + ChatConstants.ERROR_INVALID_JSON + "\"}");
+            String userId = (String) session.getUserProperties().get("userId");
+            logger.error("Invalid JSON - session: {}, user: {}, error: {}", session.getId(), userId, e.getMessage());
+            sendTextSafe(session, "{\"error\":\"" + ChatConstants.ERROR_INVALID_JSON + "\"}");
         } catch (Exception ex) {
-            logger.error("Unexpected error on session {}: {}", session.getId(), ex.getMessage(), ex);
-            session.getBasicRemote().sendText("{\"error\":\"" + ChatConstants.ERROR_INTERNAL_SERVER + "\"}");
+            String userId = (String) session.getUserProperties().get("userId");
+            logger.error("Processing error - session: {}, user: {}, error: {}", session.getId(), userId, ex.getMessage(), ex);
+            sendTextSafe(session, "{\"error\":\"" + ChatConstants.ERROR_INTERNAL_SERVER + "\"}");
         }
     }
 
     @OnClose
-    public void onClose(Session session) {
-        logger.info("Session {} closed", session.getId());
+    public void onClose(Session session, CloseReason reason) {
+        String userId = (String) session.getUserProperties().get("userId");
+        logger.info("WebSocket disconnected - session: {}, user: {}, reason: {}",
+            session.getId(), userId != null ? userId : "unknown", reason.getReasonPhrase());
     }
 
     @OnError
     public void onError(Session session, Throwable t) {
         String sessionId = (session != null) ? session.getId() : "unknown";
-        logger.error("Error in session {}: {}", sessionId, t.getMessage(), t);
+        String userId = (session != null) ? (String) session.getUserProperties().get("userId") : "unknown";
+        logger.error("WebSocket error - session: {}, user: {}, error: {}", sessionId, userId, t.getMessage());
+
+        if (session != null) {
+            try {
+                if (session.isOpen() && !session.getUserProperties().containsKey("closing")) {
+                    // Mark closing to avoid recursive close calls
+                    session.getUserProperties().put("closing", true);
+                    session.close(new CloseReason(CloseReason.CloseCodes.UNEXPECTED_CONDITION, "Error occurred"));
+                }
+            } catch (IOException e) {
+                logger.debug("Exception closing session {}: {}", sessionId, e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Helper method to send text message to client safely.
+     * Checks if the session is open and handles IOExceptions gracefully.
+     */
+    private void sendTextSafe(Session session, String message) {
+        if (session != null && session.isOpen()) {
+            try {
+                session.getBasicRemote().sendText(message);
+            } catch (IOException e) {
+                // Client disconnected abruptly; log info and close session cleanly
+                logger.info("Client closed connection abruptly for session {}: {}", session.getId(), e.getMessage());
+                try {
+                    if (session.isOpen()) {
+                        session.close(new CloseReason(CloseReason.CloseCodes.PROTOCOL_ERROR, "IOException on send"));
+                    }
+                } catch (IOException closeEx) {
+                    logger.info("Exception while closing session {}: {}", session.getId(), closeEx.getMessage());
+                }
+            }
+        } else {
+            logger.warn("Session {} is closed or null, skipping send", (session != null ? session.getId() : "null"));
+        }
     }
 }

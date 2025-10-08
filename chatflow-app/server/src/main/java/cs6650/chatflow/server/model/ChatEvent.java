@@ -5,6 +5,7 @@ package cs6650.chatflow.server.model;
  * Contains common fields shared by client commands and server responses.
  */
 public class ChatEvent {
+    private String messageId;
     private String userId;
     private String username;
     private String message;
@@ -12,6 +13,9 @@ public class ChatEvent {
     private String messageType;
 
     // Getters and setters
+    public String getMessageId() { return messageId; }
+    public void setMessageId(String messageId) { this.messageId = messageId; }
+
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
 
