@@ -1,6 +1,7 @@
 package cs6650.chatflow.client;
 
 import cs6650.chatflow.client.commons.Constants;
+import cs6650.chatflow.client.coordinator.MainPhaseExecutor;
 import cs6650.chatflow.client.sender.WarmupSenderThread;
 
 import java.util.concurrent.CountDownLatch;
@@ -63,6 +64,15 @@ public class Main {
 
         printResults(Constants.WARMUP_THREADS, actualMessagesSent, actualMessagesReceived,
                     sendDurationSeconds, responseDurationSeconds, sendThroughput, overallThroughput);
+
+        // Execute main phase
+        try {
+            MainPhaseExecutor mainExecutor = new MainPhaseExecutor(serverIp, port);
+            mainExecutor.execute();
+        } catch (Exception e) {
+            System.err.println("Error during main phase: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     private static void printHeader() {

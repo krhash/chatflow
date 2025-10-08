@@ -25,9 +25,6 @@ public final class ChatConstants {
     /** Username validation regex pattern (3-20 alphanumeric characters only, no underscores) */
     public static final String USERNAME_REGEX = "[a-zA-Z0-9]{3,20}";
 
-    /** ISO-8601 timestamp regex pattern for validation */
-    public static final String ISO8601_REGEX = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?(Z|[+-]\\d{2}:\\d{2})?$";
-
     // ========== USER VALIDATION LIMITS ==========
     /** Minimum valid user ID value */
     public static final int USER_ID_MIN = 1;

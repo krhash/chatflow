@@ -7,6 +7,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.URI;
+import cs6650.chatflow.client.model.MessageResponse;
+import cs6650.chatflow.client.util.ResponseQueue;
+
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -23,22 +26,11 @@ public class WebSocketClient extends org.java_websocket.client.WebSocketClient {
     private final Map<String, Long> responseLatencies;
     private final CountDownLatch allResponsesReceived;
     private final AtomicInteger totalMessagesReceived;
+    private final ResponseQueue responseQueue;
     private final Gson gson = new Gson();
 
     /**
-     * Creates WebSocket client without global message counter.
-     * @param serverUri WebSocket server URI
-     * @param sentMessages map to store sent message timestamps
-     * @param responseLatencies map to store response latencies
-     * @param allResponsesReceived latch to signal response completion
-     */
-    public WebSocketClient(URI serverUri, Map<String, Long> sentMessages,
-                           Map<String, Long> responseLatencies, CountDownLatch allResponsesReceived) {
-        this(serverUri, sentMessages, responseLatencies, allResponsesReceived, null);
-    }
-
-    /**
-     * Creates WebSocket client with global message counter.
+     * Creates WebSocket client for warmup phase (backward compatibility).
      * @param serverUri WebSocket server URI
      * @param sentMessages map to store sent message timestamps
      * @param responseLatencies map to store response latencies
@@ -53,6 +45,26 @@ public class WebSocketClient extends org.java_websocket.client.WebSocketClient {
         this.responseLatencies = responseLatencies;
         this.allResponsesReceived = allResponsesReceived;
         this.totalMessagesReceived = totalMessagesReceived;
+        this.responseQueue = null; // Not used in warmup mode
+    }
+
+    /**
+     * Creates WebSocket client for main phase connection pool.
+     * @param serverUri WebSocket server URI
+     * @param sentMessages map to store sent message timestamps (null for pool)
+     * @param responseLatencies map to store response latencies (null for pool)
+     * @param allResponsesReceived latch to signal response completion (null for pool)
+     * @param responseQueue queue for asynchronous response processing
+     */
+    public WebSocketClient(URI serverUri, Map<String, Long> sentMessages,
+                           Map<String, Long> responseLatencies, CountDownLatch allResponsesReceived,
+                           ResponseQueue responseQueue) {
+        super(serverUri);
+        this.sentMessages = sentMessages;
+        this.responseLatencies = responseLatencies;
+        this.allResponsesReceived = allResponsesReceived;
+        this.totalMessagesReceived = null; // Not used in pool mode
+        this.responseQueue = responseQueue;
     }
 
     @Override

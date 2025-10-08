@@ -42,4 +42,15 @@ public class Constants {
     // Load test configuration
     public static final int TOTAL_MESSAGES = 500_000;
     public static final int WARMUP_TOTAL_MESSAGES = WARMUP_THREADS * MESSAGES_PER_THREAD;
+
+    // Main phase configuration
+    public static final int MAIN_PHASE_CONNECTION_POOL_SIZE = 8;
+    public static final int MAIN_PHASE_CONSUMER_THREADS = 16;
+    public static final int RESPONSE_THREAD_POOL_SIZE = 8;
+    public static final int MESSAGE_QUEUE_CAPACITY = 100_000;
+    public static final int RESPONSE_QUEUE_CAPACITY = 50_000;
+    public static final int DEAD_LETTER_QUEUE_CAPACITY = 10_000;
+    public static final int MESSAGE_TIMEOUT_MILLIS = 300000; // 5 minutes for high-throughput testing
+    public static final int DLQ_RETRY_ATTEMPTS = 2;
+    public static final int PROGRESS_REPORT_INTERVAL = 10000;
 }
