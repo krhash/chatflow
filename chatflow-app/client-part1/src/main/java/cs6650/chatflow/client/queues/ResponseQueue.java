@@ -1,4 +1,4 @@
-package cs6650.chatflow.client.util;
+package cs6650.chatflow.client.queues;
 
 import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.MessageResponse;

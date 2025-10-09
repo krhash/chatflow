@@ -1,4 +1,4 @@
-package cs6650.chatflow.client.sender;
+package cs6650.chatflow.client.workers;
 
 import com.google.gson.Gson;
 import cs6650.chatflow.client.commons.Constants;
@@ -20,7 +20,7 @@ import java.util.function.Consumer;
  * Thread for executing WebSocket warmup phase.
  * Sends messages to server and tracks responses with retry logic.
  */
-public class WarmupSenderThread implements Runnable {
+public class WarmupWorker implements Runnable {
 
     private static final Gson gson = new Gson();
 
@@ -47,9 +47,9 @@ public class WarmupSenderThread implements Runnable {
      * @param responseCompletionLatch latch for response completion coordination
      * @throws URISyntaxException if URI construction fails
      */
-    public WarmupSenderThread(String wsBaseUri, String roomId,
-                              int totalMessages, CountDownLatch sendCompletionLatch,
-                              CountDownLatch responseCompletionLatch) throws URISyntaxException {
+    public WarmupWorker(String wsBaseUri, String roomId,
+                        int totalMessages, CountDownLatch sendCompletionLatch,
+                        CountDownLatch responseCompletionLatch) throws URISyntaxException {
         this(wsBaseUri, roomId, totalMessages, sendCompletionLatch, responseCompletionLatch, null, null);
     }
 
@@ -64,10 +64,10 @@ public class WarmupSenderThread implements Runnable {
      * @param totalMessagesReceived global counter for received messages
      * @throws URISyntaxException if URI construction fails
      */
-    public WarmupSenderThread(String wsBaseUri, String roomId,
-                              int totalMessages, CountDownLatch sendCompletionLatch,
-                              CountDownLatch responseCompletionLatch,
-                              AtomicInteger totalMessagesSent, AtomicInteger totalMessagesReceived) throws URISyntaxException {
+    public WarmupWorker(String wsBaseUri, String roomId,
+                        int totalMessages, CountDownLatch sendCompletionLatch,
+                        CountDownLatch responseCompletionLatch,
+                        AtomicInteger totalMessagesSent, AtomicInteger totalMessagesReceived) throws URISyntaxException {
         this.totalMessages = totalMessages;
         this.wsBaseUri = wsBaseUri;
         this.roomId = roomId;

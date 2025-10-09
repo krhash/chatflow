@@ -1,9 +1,11 @@
 package cs6650.chatflow.client.coordinator;
 
 import cs6650.chatflow.client.commons.Constants;
-import cs6650.chatflow.client.sender.MessageConsumer;
-import cs6650.chatflow.client.sender.MessageProducer;
-import cs6650.chatflow.client.sender.ResponseProcessor;
+import cs6650.chatflow.client.model.MainPhaseResult;
+import cs6650.chatflow.client.queues.DeadLetterQueue;
+import cs6650.chatflow.client.queues.MessageQueue;
+import cs6650.chatflow.client.queues.ResponseQueue;
+import cs6650.chatflow.client.workers.*;
 import cs6650.chatflow.client.util.*;
 import cs6650.chatflow.client.websocket.WebSocketConnectionPool;
 import org.slf4j.Logger;
@@ -136,13 +138,13 @@ public class MainPhaseExecutor {
 
         // Start producer
         logger.info("Starting message producer thread...");
-        producerExecutor.submit(new MessageProducer(messageQueue, totalMessages));
+        producerExecutor.submit(new MainPhaseMessageProducer(messageQueue, totalMessages));
         logger.info("Started message producer thread");
 
         // Start consumers
         logger.info("Starting {} message consumer threads...", Constants.MAIN_PHASE_CONSUMER_THREADS);
         for (int i = 0; i < Constants.MAIN_PHASE_CONSUMER_THREADS; i++) {
-            consumerExecutor.submit(new MessageConsumer(messageQueue, connectionPool,
+            consumerExecutor.submit(new MainPhaseMessageConsumer(messageQueue, connectionPool,
                 messageTimer, messagesSent, totalMessages));
         }
         logger.info("Started {} message consumer threads", Constants.MAIN_PHASE_CONSUMER_THREADS);
@@ -150,7 +152,7 @@ public class MainPhaseExecutor {
         // Start response processors
         logger.info("Starting {} response processor threads...", Constants.RESPONSE_THREAD_POOL_SIZE);
         for (int i = 0; i < Constants.RESPONSE_THREAD_POOL_SIZE; i++) {
-            responseExecutor.submit(new ResponseProcessor(responseQueue, messageTimer,
+            responseExecutor.submit(new MainPhaseResponseWorker(responseQueue, messageTimer,
                 messagesReceived, responseLatencies));
         }
         logger.info("Started {} response processor threads", Constants.RESPONSE_THREAD_POOL_SIZE);
@@ -163,7 +165,7 @@ public class MainPhaseExecutor {
         // Start retry workers
         logger.info("Starting {} retry worker threads...", Constants.RETRY_WORKER_THREADS);
         for (int i = 0; i < Constants.RETRY_WORKER_THREADS; i++) {
-            retryExecutor.submit(new RetryWorker(connectionPool, deadLetterQueue));
+            retryExecutor.submit(new MainPhaseRetryWorker(connectionPool, deadLetterQueue));
         }
         logger.info("Started {} retry worker threads", Constants.RETRY_WORKER_THREADS);
 

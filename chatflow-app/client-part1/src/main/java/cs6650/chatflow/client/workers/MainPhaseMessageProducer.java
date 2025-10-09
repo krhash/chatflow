@@ -1,9 +1,9 @@
-package cs6650.chatflow.client.sender;
+package cs6650.chatflow.client.workers;
 
 import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.util.MessageGenerator;
-import cs6650.chatflow.client.util.MessageQueue;
+import cs6650.chatflow.client.queues.MessageQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,8 +11,8 @@ import org.slf4j.LoggerFactory;
  * Producer thread that generates messages and puts them in the queue.
  * Runs continuously until all messages are generated.
  */
-public class MessageProducer implements Runnable {
-    private static final Logger logger = LoggerFactory.getLogger(MessageProducer.class);
+public class MainPhaseMessageProducer implements Runnable {
+    private static final Logger logger = LoggerFactory.getLogger(MainPhaseMessageProducer.class);
 
     private final MessageQueue messageQueue;
     private final int totalMessages;
@@ -22,7 +22,7 @@ public class MessageProducer implements Runnable {
      * @param messageQueue queue to put generated messages
      * @param totalMessages total number of messages to generate
      */
-    public MessageProducer(MessageQueue messageQueue, int totalMessages) {
+    public MainPhaseMessageProducer(MessageQueue messageQueue, int totalMessages) {
         this.messageQueue = messageQueue;
         this.totalMessages = totalMessages;
     }

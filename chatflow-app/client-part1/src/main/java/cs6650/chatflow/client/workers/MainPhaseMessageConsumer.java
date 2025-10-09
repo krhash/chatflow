@@ -1,9 +1,9 @@
-package cs6650.chatflow.client.sender;
+package cs6650.chatflow.client.workers;
 
 import com.google.gson.Gson;
 import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
-import cs6650.chatflow.client.util.MessageQueue;
+import cs6650.chatflow.client.queues.MessageQueue;
 import cs6650.chatflow.client.util.MessageTimer;
 import cs6650.chatflow.client.websocket.WebSocketConnectionPool;
 import org.slf4j.Logger;
@@ -15,8 +15,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Consumer thread that takes messages from queue and sends them via WebSocket connection pool.
  * Implements retry logic and tracks message send timestamps.
  */
-public class MessageConsumer implements Runnable {
-    private static final Logger logger = LoggerFactory.getLogger(MessageConsumer.class);
+public class MainPhaseMessageConsumer implements Runnable {
+    private static final Logger logger = LoggerFactory.getLogger(MainPhaseMessageConsumer.class);
 
     private final MessageQueue messageQueue;
     private final WebSocketConnectionPool connectionPool;
@@ -33,8 +33,8 @@ public class MessageConsumer implements Runnable {
      * @param messagesSent global counter for sent messages
      * @param totalMessages total messages to be sent
      */
-    public MessageConsumer(MessageQueue messageQueue, WebSocketConnectionPool connectionPool,
-                          MessageTimer messageTimer, AtomicInteger messagesSent, int totalMessages) {
+    public MainPhaseMessageConsumer(MessageQueue messageQueue, WebSocketConnectionPool connectionPool,
+                                    MessageTimer messageTimer, AtomicInteger messagesSent, int totalMessages) {
         this.messageQueue = messageQueue;
         this.connectionPool = connectionPool;
         this.messageTimer = messageTimer;

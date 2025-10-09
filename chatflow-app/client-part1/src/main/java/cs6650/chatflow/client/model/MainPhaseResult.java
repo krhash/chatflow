@@ -1,4 +1,4 @@
-package cs6650.chatflow.client.coordinator;
+package cs6650.chatflow.client.model;
 
 /**
  * Result of main phase execution.

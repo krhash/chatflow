@@ -1,23 +1,22 @@
-package cs6650.chatflow.client.sender;
+package cs6650.chatflow.client.workers;
 
 import com.google.gson.Gson;
 import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.model.MessageResponse;
 import cs6650.chatflow.client.util.MessageTimer;
-import cs6650.chatflow.client.util.ResponseQueue;
+import cs6650.chatflow.client.queues.ResponseQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Processes WebSocket responses asynchronously.
  * Updates latency tracking and message counters.
  */
-public class ResponseProcessor implements Runnable {
-    private static final Logger logger = LoggerFactory.getLogger(ResponseProcessor.class);
+public class MainPhaseResponseWorker implements Runnable {
+    private static final Logger logger = LoggerFactory.getLogger(MainPhaseResponseWorker.class);
 
     private final ResponseQueue responseQueue;
     private final MessageTimer messageTimer;
@@ -32,8 +31,8 @@ public class ResponseProcessor implements Runnable {
      * @param messagesReceived global counter for received messages
      * @param responseLatencies map to store response latencies
      */
-    public ResponseProcessor(ResponseQueue responseQueue, MessageTimer messageTimer,
-                           AtomicInteger messagesReceived, Map<String, Long> responseLatencies) {
+    public MainPhaseResponseWorker(ResponseQueue responseQueue, MessageTimer messageTimer,
+                                   AtomicInteger messagesReceived, Map<String, Long> responseLatencies) {
         this.responseQueue = responseQueue;
         this.messageTimer = messageTimer;
         this.messagesReceived = messagesReceived;

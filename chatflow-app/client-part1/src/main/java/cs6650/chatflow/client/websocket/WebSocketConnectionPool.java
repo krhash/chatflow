@@ -2,8 +2,7 @@ package cs6650.chatflow.client.websocket;
 
 import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
-import cs6650.chatflow.client.model.MessageResponse;
-import cs6650.chatflow.client.util.ResponseQueue;
+import cs6650.chatflow.client.queues.ResponseQueue;
 import com.google.gson.Gson;
 
 import java.net.URI;

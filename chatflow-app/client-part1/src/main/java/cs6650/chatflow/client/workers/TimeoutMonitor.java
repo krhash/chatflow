@@ -1,8 +1,7 @@
-package cs6650.chatflow.client.coordinator;
+package cs6650.chatflow.client.workers;
 
-import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
-import cs6650.chatflow.client.util.DeadLetterQueue;
+import cs6650.chatflow.client.queues.DeadLetterQueue;
 import cs6650.chatflow.client.util.MessageTimer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
