@@ -5,6 +5,7 @@ import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.util.MessageGenerator;
 
+import cs6650.chatflow.client.model.MessageResponse;
 import cs6650.chatflow.client.websocket.WebSocketClient;
 
 import java.net.URI;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * Thread for executing WebSocket warmup phase.
@@ -23,6 +25,8 @@ public class WarmupSenderThread implements Runnable {
     private static final Gson gson = new Gson();
 
     private final int totalMessages;
+    private final String wsBaseUri;
+    private final String roomId;
     private final URI uri;
     private final Map<String, Long> sentMessages;
     private final Map<String, Long> responseLatencies;
@@ -31,26 +35,27 @@ public class WarmupSenderThread implements Runnable {
     private final AtomicInteger totalMessagesSent;
     private final AtomicInteger totalMessagesReceived;
 
+    // Current connection's response latch
+    private CountDownLatch currentResponseLatch;
+
     /**
      * Creates thread without global message counters.
-     * @param serverIp server IP address
-     * @param port server port
+     * @param wsBaseUri WebSocket base URI (ws://server:port/servlet-context)
      * @param roomId chat room identifier
      * @param totalMessages number of messages to send
      * @param sendCompletionLatch latch for send completion coordination
      * @param responseCompletionLatch latch for response completion coordination
      * @throws URISyntaxException if URI construction fails
      */
-    public WarmupSenderThread(String serverIp, String port, String roomId,
+    public WarmupSenderThread(String wsBaseUri, String roomId,
                               int totalMessages, CountDownLatch sendCompletionLatch,
                               CountDownLatch responseCompletionLatch) throws URISyntaxException {
-        this(serverIp, port, roomId, totalMessages, sendCompletionLatch, responseCompletionLatch, null, null);
+        this(wsBaseUri, roomId, totalMessages, sendCompletionLatch, responseCompletionLatch, null, null);
     }
 
     /**
      * Creates thread with global message counters.
-     * @param serverIp server IP address
-     * @param port server port
+     * @param wsBaseUri WebSocket base URI (ws://server:port/servlet-context)
      * @param roomId chat room identifier
      * @param totalMessages number of messages to send
      * @param sendCompletionLatch latch for send completion coordination
@@ -59,18 +64,20 @@ public class WarmupSenderThread implements Runnable {
      * @param totalMessagesReceived global counter for received messages
      * @throws URISyntaxException if URI construction fails
      */
-    public WarmupSenderThread(String serverIp, String port, String roomId,
+    public WarmupSenderThread(String wsBaseUri, String roomId,
                               int totalMessages, CountDownLatch sendCompletionLatch,
                               CountDownLatch responseCompletionLatch,
                               AtomicInteger totalMessagesSent, AtomicInteger totalMessagesReceived) throws URISyntaxException {
         this.totalMessages = totalMessages;
+        this.wsBaseUri = wsBaseUri;
+        this.roomId = roomId;
         this.sendCompletionLatch = sendCompletionLatch;
         this.responseCompletionLatch = responseCompletionLatch;
         this.totalMessagesSent = totalMessagesSent;
         this.totalMessagesReceived = totalMessagesReceived;
 
         // Pre-initialize objects
-        this.uri = new URI(String.format("ws://%s:%s/chatflow-server/chat/%s", serverIp, port, roomId));
+        this.uri = new URI(String.format("%s/chat/%s", wsBaseUri, roomId));
         // Pre-size HashMaps to avoid resizing (1000 messages / 0.75 load factor = ~1333 capacity)
         this.sentMessages = new ConcurrentHashMap<>(1400);
         this.responseLatencies = new ConcurrentHashMap<>(1400);
@@ -142,8 +149,38 @@ public class WarmupSenderThread implements Runnable {
      * @throws Exception if connection fails
      */
     private WebSocketClient connectToServer(int messagesSent) throws Exception {
-        CountDownLatch allResponsesReceived = new CountDownLatch(totalMessages - messagesSent);
-        WebSocketClient client = new WebSocketClient(uri, sentMessages, responseLatencies, allResponsesReceived, totalMessagesReceived);
+        currentResponseLatch = new CountDownLatch(totalMessages - messagesSent);
+
+        // Create response handler for warmup phase
+        Consumer<MessageResponse> responseHandler = response -> {
+            try {
+                // Parse response and correlate with sent message
+                ChatMessage responseMessage = gson.fromJson(response.getMessageJson(), ChatMessage.class);
+
+                if (responseMessage.getMessageId() != null) {
+                    Long sentTime = sentMessages.get(responseMessage.getMessageId());
+                    if (sentTime != null) {
+                        long latencyNanos = response.getReceivedTimestampNanos() - sentTime;
+                        responseLatencies.put(responseMessage.getMessageId(), latencyNanos);
+                    }
+                }
+
+                // Increment global counter
+                if (totalMessagesReceived != null) {
+                    totalMessagesReceived.incrementAndGet();
+                }
+
+                // Signal response received
+                currentResponseLatch.countDown();
+
+            } catch (Exception e) {
+                System.err.println("Error processing warmup response: " + e.getMessage());
+                // Even on error, count it as a response to avoid hanging
+                currentResponseLatch.countDown();
+            }
+        };
+
+        WebSocketClient client = new WebSocketClient(uri, responseHandler);
         client.connectBlocking();
         return client;
     }
@@ -223,12 +260,11 @@ public class WarmupSenderThread implements Runnable {
 
     /**
      * Waits for all expected responses with timeout.
-     * @param client WebSocket client with response latch
+     * @param client WebSocket client (for compatibility)
      * @throws InterruptedException if thread is interrupted
      */
     private void waitForAllResponses(WebSocketClient client) throws InterruptedException {
-        CountDownLatch allResponsesReceived = client.getResponseLatch();
-        boolean allReceived = allResponsesReceived.await(Constants.RESPONSE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+        boolean allReceived = currentResponseLatch.await(Constants.RESPONSE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
 
         if (!allReceived) {
             System.err.printf("Thread %s timed out waiting for responses. Received %d/%d%n",

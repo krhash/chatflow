@@ -2,6 +2,7 @@ package cs6650.chatflow.client.websocket;
 
 import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
+import cs6650.chatflow.client.model.MessageResponse;
 import cs6650.chatflow.client.util.ResponseQueue;
 import com.google.gson.Gson;
 
@@ -15,7 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class WebSocketConnectionPool {
 
-    private final MainPhaseWebSocketClient[] connections;
+    private final WebSocketClient[] connections;
     private final AtomicInteger nextConnectionIndex = new AtomicInteger(0);
     private final ResponseQueue responseQueue;
 
@@ -28,11 +29,14 @@ public class WebSocketConnectionPool {
      */
     public WebSocketConnectionPool(URI serverUri, ResponseQueue responseQueue) throws URISyntaxException, InterruptedException {
         this.responseQueue = responseQueue;
-        this.connections = new MainPhaseWebSocketClient[Constants.MAIN_PHASE_CONNECTION_POOL_SIZE];
+        this.connections = new WebSocketClient[Constants.MAIN_PHASE_CONNECTION_POOL_SIZE];
 
-        // Initialize all connections
+        // Initialize all connections with response queue callback
         for (int i = 0; i < connections.length; i++) {
-            connections[i] = new MainPhaseWebSocketClient(serverUri, responseQueue);
+            connections[i] = new WebSocketClient(serverUri, response -> {
+                // Queue response for asynchronous processing
+                responseQueue.offer(response);
+            });
             connections[i].connectBlocking();
         }
     }
@@ -71,7 +75,7 @@ public class WebSocketConnectionPool {
      * @return true if all connections are healthy
      */
     public boolean areAllConnectionsOpen() {
-        for (MainPhaseWebSocketClient connection : connections) {
+        for (WebSocketClient connection : connections) {
             if (!connection.isOpen()) {
                 return false;
             }
@@ -85,7 +89,7 @@ public class WebSocketConnectionPool {
      */
     public int getOpenConnectionCount() {
         int count = 0;
-        for (MainPhaseWebSocketClient connection : connections) {
+        for (WebSocketClient connection : connections) {
             if (connection.isOpen()) {
                 count++;
             }
@@ -117,7 +121,7 @@ public class WebSocketConnectionPool {
      * Closes all connections in the pool.
      */
     public void closeAll() {
-        for (MainPhaseWebSocketClient connection : connections) {
+        for (WebSocketClient connection : connections) {
             if (connection != null) {
                 connection.close(1000, "main phase complete");
             }

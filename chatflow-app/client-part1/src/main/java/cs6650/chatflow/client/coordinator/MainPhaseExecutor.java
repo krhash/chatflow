@@ -22,8 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class MainPhaseExecutor {
     private static final Logger logger = LoggerFactory.getLogger(MainPhaseExecutor.class);
 
-    private final String serverIp;
-    private final String port;
+    private final String wsBaseUri;
     private final int totalMessages;
 
     // Core components
@@ -47,13 +46,11 @@ public class MainPhaseExecutor {
 
     /**
      * Creates main phase executor.
-     * @param serverIp server IP address
-     * @param port server port
+     * @param wsBaseUri WebSocket base URI (ws://server:port/servlet-context)
      * @param totalMessages number of messages to send in main phase
      */
-    public MainPhaseExecutor(String serverIp, String port, int totalMessages) {
-        this.serverIp = serverIp;
-        this.port = port;
+    public MainPhaseExecutor(String wsBaseUri, int totalMessages) {
+        this.wsBaseUri = wsBaseUri;
         this.totalMessages = totalMessages;
     }
 
@@ -67,7 +64,7 @@ public class MainPhaseExecutor {
         System.out.println("              High-Throughput Load Testing");
         System.out.println("=================================================================\n");
 
-        System.out.println(String.format("Connected to server: %s:%s", serverIp, port) );
+        System.out.println(String.format("Connected to server: %s", wsBaseUri) );
 
         long startTime = System.currentTimeMillis();
 
@@ -113,7 +110,7 @@ public class MainPhaseExecutor {
 
         // Create connection pool - use random room ID like warmup phase
         int roomId = (int) (Math.random() * Constants.ROOM_COUNT) + 1;
-        URI serverUri = new URI(String.format("ws://%s:%s/chatflow-server/chat/room%d", serverIp, port, roomId));
+        URI serverUri = new URI(String.format("%s/chat/room%d", wsBaseUri, roomId));
         logger.debug("Creating WebSocket connection pool with URI: {}", serverUri);
         connectionPool = new WebSocketConnectionPool(serverUri, responseQueue);
 

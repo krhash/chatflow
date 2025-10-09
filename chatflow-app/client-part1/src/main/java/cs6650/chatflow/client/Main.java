@@ -20,12 +20,17 @@ public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
 
     public static void main(String[] args) throws InterruptedException {
-        if (args.length < 2) {
+        if (args.length != 3) {
             printUsage();
             System.exit(1);
         }
         String serverIp = args[0];
         String port = args[1];
+        String servletContext = args[2];
+
+        // Build WebSocket base URI
+        String wsBaseUri = "ws://" + serverIp + ":" + port + "/" + servletContext;
+        logger.info("WebSocket base URI: {}", wsBaseUri);
 
         printHeader();
 
@@ -42,7 +47,7 @@ public class Main {
             String roomId = "room" + ((i % Constants.ROOM_COUNT) + 1);
             try {
                 logger.debug("Creating warmup thread {} with room {}", i + 1, roomId);
-                executorService.submit(new WarmupSenderThread(serverIp, port, roomId,
+                executorService.submit(new WarmupSenderThread(wsBaseUri, roomId,
                         Constants.MESSAGES_PER_THREAD, sendCompletionLatch, responseCompletionLatch,
                         totalMessagesSent, totalMessagesReceived));
             } catch (Exception e) {
@@ -75,7 +80,7 @@ public class Main {
         MainPhaseResult mainPhaseResult = null;
         try {
             int mainPhaseMessages = Constants.TOTAL_MESSAGES - Constants.WARMUP_TOTAL_MESSAGES;
-            MainPhaseExecutor mainExecutor = new MainPhaseExecutor(serverIp, port, mainPhaseMessages);
+            MainPhaseExecutor mainExecutor = new MainPhaseExecutor(wsBaseUri, mainPhaseMessages);
             mainPhaseResult = mainExecutor.execute();
         } catch (Exception e) {
             System.err.println("Error during main phase: " + e.getMessage());
@@ -105,11 +110,11 @@ public class Main {
         System.out.println("=================================================================");
         System.out.println("                          Usage");
         System.out.println("-----------------------------------------------------------------");
-        System.out.println(" java -jar client-part1.jar <server-ip> <port>");
+        System.out.println(" java -jar client-part1.jar <server> <port> <servlet-context>");
         System.out.println();
         System.out.println(" Examples:");
-        System.out.println("   java -jar client-part1.jar localhost 8080");
-        System.out.println("   java -jar client-part1.jar 192.168.1.100 8081");
+        System.out.println("   java -jar client-part1.jar localhost 8080 chatflow-server");
+        System.out.println("   java -jar client-part1.jar 192.168.1.100 8081 chatflow-server");
         System.out.println("=================================================================");
         System.out.println();
     }
