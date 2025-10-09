@@ -21,6 +21,7 @@ class ValidationUtilsTest {
     @BeforeEach
     void setUp() {
         validCommand = new ChatCommand();
+        validCommand.setMessageId("msg-12345-abcdef");
         validCommand.setUserId("12345");
         validCommand.setUsername("testuser123");
         validCommand.setMessage("Hello, World!");
