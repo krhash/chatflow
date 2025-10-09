@@ -1,7 +1,9 @@
 package cs6650.chatflow.client.websocket;
 
 import cs6650.chatflow.client.commons.Constants;
+import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.util.ResponseQueue;
+import com.google.gson.Gson;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -89,6 +91,26 @@ public class WebSocketConnectionPool {
             }
         }
         return count;
+    }
+
+    /**
+     * Sends a message through the next available connection.
+     * @param message the message to send
+     * @return true if message was sent successfully
+     */
+    public boolean sendMessage(ChatMessage message) {
+        try {
+            org.java_websocket.client.WebSocketClient connection = getNextConnection();
+            if (connection != null && connection.isOpen()) {
+                Gson gson = new Gson();
+                String jsonMessage = gson.toJson(message);
+                connection.send(jsonMessage);
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**

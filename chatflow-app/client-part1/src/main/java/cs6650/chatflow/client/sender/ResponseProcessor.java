@@ -5,6 +5,8 @@ import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.model.MessageResponse;
 import cs6650.chatflow.client.util.MessageTimer;
 import cs6650.chatflow.client.util.ResponseQueue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Updates latency tracking and message counters.
  */
 public class ResponseProcessor implements Runnable {
+    private static final Logger logger = LoggerFactory.getLogger(ResponseProcessor.class);
 
     private final ResponseQueue responseQueue;
     private final MessageTimer messageTimer;
@@ -39,7 +42,7 @@ public class ResponseProcessor implements Runnable {
 
     @Override
     public void run() {
-        System.out.println("ResponseProcessor: Starting response processing...");
+        logger.debug("Starting response processing...");
 
         try {
             while (!Thread.currentThread().isInterrupted()) {
@@ -52,7 +55,7 @@ public class ResponseProcessor implements Runnable {
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.out.println("ResponseProcessor: Interrupted, shutting down");
+            logger.debug("Interrupted, shutting down");
         }
     }
 
@@ -76,7 +79,7 @@ public class ResponseProcessor implements Runnable {
             }
 
         } catch (Exception e) {
-            System.err.println("Error processing response: " + e.getMessage());
+            logger.error("Error processing response: {}", e.getMessage());
         }
     }
 }

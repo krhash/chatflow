@@ -45,12 +45,19 @@ public class Constants {
 
     // Main phase configuration
     public static final int MAIN_PHASE_CONNECTION_POOL_SIZE = 8;
-    public static final int MAIN_PHASE_CONSUMER_THREADS = 16;
+    public static final int MAIN_PHASE_CONSUMER_THREADS = 8;
     public static final int RESPONSE_THREAD_POOL_SIZE = 8;
-    public static final int MESSAGE_QUEUE_CAPACITY = 100_000;
-    public static final int RESPONSE_QUEUE_CAPACITY = 50_000;
-    public static final int DEAD_LETTER_QUEUE_CAPACITY = 10_000;
-    public static final int MESSAGE_TIMEOUT_MILLIS = 300000; // 5 minutes for high-throughput testing
+    public static final int RETRY_WORKER_THREADS = 8;
+    public static final int MESSAGE_QUEUE_CAPACITY = 5000;
+    public static final int RESPONSE_QUEUE_CAPACITY = 2000;
+    public static final int DEAD_LETTER_QUEUE_CAPACITY = 1000;
+    public static final int MESSAGE_TIMEOUT_MILLIS = 60_000; // 60 seconds timeout for message response
     public static final int DLQ_RETRY_ATTEMPTS = 2;
     public static final int PROGRESS_REPORT_INTERVAL = 10000;
+
+    // Queue monitoring configuration
+    public static final int MONITORING_INTERVAL_SECONDS = 5;
+    public static final int QUEUE_STARVATION_THRESHOLD = 10;
+    public static final double QUEUE_UNDERUTILIZATION_PERCENT = 20.0;
+    public static final double RESPONSE_QUEUE_HIGH_WATERMARK = 80.0;
 }

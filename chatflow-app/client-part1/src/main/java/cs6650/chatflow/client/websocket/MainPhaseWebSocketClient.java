@@ -38,6 +38,7 @@ public class MainPhaseWebSocketClient extends org.java_websocket.client.WebSocke
     @Override
     public void onMessage(String message) {
         try {
+            logger.debug("Received message: " + message);
             // Create response wrapper with receive timestamp
             MessageResponse response = new MessageResponse(message, System.nanoTime());
 

@@ -6,6 +6,8 @@ import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.util.MessageQueue;
 import cs6650.chatflow.client.util.MessageTimer;
 import cs6650.chatflow.client.websocket.WebSocketConnectionPool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -14,11 +16,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Implements retry logic and tracks message send timestamps.
  */
 public class MessageConsumer implements Runnable {
+    private static final Logger logger = LoggerFactory.getLogger(MessageConsumer.class);
 
     private final MessageQueue messageQueue;
     private final WebSocketConnectionPool connectionPool;
     private final MessageTimer messageTimer;
     private final AtomicInteger messagesSent;
+    private final int totalMessages;
     private final Gson gson = new Gson();
 
     /**
@@ -27,32 +31,45 @@ public class MessageConsumer implements Runnable {
      * @param connectionPool WebSocket connection pool
      * @param messageTimer timer for tracking message timeouts
      * @param messagesSent global counter for sent messages
+     * @param totalMessages total messages to be sent
      */
     public MessageConsumer(MessageQueue messageQueue, WebSocketConnectionPool connectionPool,
-                          MessageTimer messageTimer, AtomicInteger messagesSent) {
+                          MessageTimer messageTimer, AtomicInteger messagesSent, int totalMessages) {
         this.messageQueue = messageQueue;
         this.connectionPool = connectionPool;
         this.messageTimer = messageTimer;
         this.messagesSent = messagesSent;
+        this.totalMessages = totalMessages;
     }
 
     @Override
     public void run() {
-        System.out.println("MessageConsumer: Starting message consumption...");
+        logger.debug("Starting message consumption...");
 
         try {
             while (!Thread.currentThread().isInterrupted()) {
-                // Get next message from queue
-                ChatMessage message = messageQueue.take();
+                // Check if all messages have been sent - if so, stop gracefully
+                if (messagesSent.get() >= totalMessages) {
+                    logger.debug("All messages sent, stopping gracefully");
+                    break;
+                }
 
-                // Send message with retry logic
-                sendMessageWithRetry(message);
+                // Try to get next message with timeout to avoid indefinite blocking
+                ChatMessage message = messageQueue.poll(1000); // Wait up to 1 second
+
+                if (message != null) {
+                    // Send message with retry logic
+                    sendMessageWithRetry(message);
+                }
+                // If no message available, loop will check completion condition again
             }
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.out.println("MessageConsumer: Interrupted, shutting down");
+            logger.debug("Interrupted, shutting down");
         }
+
+        logger.debug("Finished processing");
     }
 
     /**
@@ -87,12 +104,12 @@ public class MessageConsumer implements Runnable {
 
             } catch (IllegalStateException e) {
                 // Connection closed - don't retry, connection pool should handle this
-                System.err.printf("Connection closed for message %s, skipping%n", message.getMessageId());
+                logger.warn("Connection closed for message {}, skipping", message.getMessageId());
                 return;
             } catch (Exception e) {
                 if (attempt == Constants.MESSAGE_RETRY_ATTEMPTS) {
                     // All retries exhausted
-                    System.err.printf("Failed to send message %s after %d attempts: %s%n",
+                    logger.error("Failed to send message {} after {} attempts: {}",
                         message.getMessageId(), Constants.MESSAGE_RETRY_ATTEMPTS, e.getMessage());
                     return;
                 }

@@ -4,12 +4,15 @@ import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.util.MessageGenerator;
 import cs6650.chatflow.client.util.MessageQueue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Producer thread that generates messages and puts them in the queue.
  * Runs continuously until all messages are generated.
  */
 public class MessageProducer implements Runnable {
+    private static final Logger logger = LoggerFactory.getLogger(MessageProducer.class);
 
     private final MessageQueue messageQueue;
     private final int totalMessages;
@@ -27,24 +30,23 @@ public class MessageProducer implements Runnable {
     @Override
     public void run() {
         try {
-            System.out.println("MessageProducer: Starting message generation...");
+            logger.info("Starting message generation...");
 
             for (int i = 0; i < totalMessages; i++) {
                 ChatMessage message = MessageGenerator.generateRandomMessage();
                 messageQueue.put(message);
 
-                // Progress reporting
+                // Progress reporting - debug level to reduce verbosity
                 if ((i + 1) % Constants.PROGRESS_REPORT_INTERVAL == 0) {
-                    System.out.printf("MessageProducer: Generated %d/%d messages%n",
-                        i + 1, totalMessages);
+                    logger.debug("Generated {}/{} messages", i + 1, totalMessages);
                 }
             }
 
-            System.out.println("MessageProducer: Completed message generation");
+            logger.info("Completed message generation");
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.err.println("MessageProducer: Interrupted during message generation");
+            logger.warn("Interrupted during message generation");
         }
     }
 }

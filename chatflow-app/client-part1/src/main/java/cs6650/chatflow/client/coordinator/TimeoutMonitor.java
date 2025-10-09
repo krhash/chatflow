@@ -4,12 +4,15 @@ import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.util.DeadLetterQueue;
 import cs6650.chatflow.client.util.MessageTimer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Monitors message timeouts and moves failed messages to dead letter queue.
  * Runs periodically to check for messages that haven't received responses.
  */
 public class TimeoutMonitor implements Runnable {
+    private static final Logger logger = LoggerFactory.getLogger(TimeoutMonitor.class);
 
     private final MessageTimer messageTimer;
     private final DeadLetterQueue deadLetterQueue;
@@ -26,7 +29,7 @@ public class TimeoutMonitor implements Runnable {
 
     @Override
     public void run() {
-        System.out.println("TimeoutMonitor: Starting timeout monitoring...");
+        logger.debug("Starting timeout monitoring...");
 
         try {
             while (!Thread.currentThread().isInterrupted()) {
@@ -34,7 +37,7 @@ public class TimeoutMonitor implements Runnable {
                 String[] timedOutMessages = messageTimer.getTimedOutMessages();
 
                 if (timedOutMessages.length > 0) {
-                    System.out.printf("TimeoutMonitor: Found %d timed-out messages%n", timedOutMessages.length);
+                    logger.info("Found {} timed-out messages", timedOutMessages.length);
 
                     // Move timed-out messages to dead letter queue
                     for (String messageId : timedOutMessages) {
@@ -55,7 +58,7 @@ public class TimeoutMonitor implements Runnable {
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.out.println("TimeoutMonitor: Interrupted, shutting down");
+            logger.debug("Interrupted, shutting down");
         }
     }
 }

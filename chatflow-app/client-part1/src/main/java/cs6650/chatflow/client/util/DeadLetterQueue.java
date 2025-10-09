@@ -39,6 +39,15 @@ public class DeadLetterQueue {
     }
 
     /**
+     * Retrieves and removes the head of the queue, waiting if necessary until an element becomes available.
+     * @return the head of the queue
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public ChatMessage take() throws InterruptedException {
+        return queue.take();
+    }
+
+    /**
      * Gets the current queue size.
      * @return number of failed messages
      */
