@@ -25,7 +25,7 @@ public class ChatWebSocketEndpoint {
 
     @OnOpen
     public void onOpen(Session session, @PathParam("roomId") String roomId) {
-        logger.info("WebSocket connected - session: {}, room: {}", session.getId(), roomId);
+        logger.info("WebSocket client connected - session: {}, room: {}", session.getId(), roomId);
     }
 
     @OnMessage
@@ -38,8 +38,7 @@ public class ChatWebSocketEndpoint {
                 session.getUserProperties().put("userId", command.getUserId());
             }
 
-            logger.debug("Received message from session {}, user {}, messageId: {}",
-                session.getId(), command.getUserId(), command.getMessageId());
+            logger.debug("Received: {}", msgJson);
 
             String validationError = ValidationUtils.validate(command);
             if (validationError != null) {
@@ -62,17 +61,15 @@ public class ChatWebSocketEndpoint {
             response.setServerTimestamp(Instant.now().toString());
             response.setStatus(ChatConstants.STATUS_OK);
 
-            sendTextSafe(session, gson.toJson(response));
-            logger.info("Message processed - session: {}, user: {}, messageId: {}",
-                session.getId(), command.getUserId(), response.getMessageId());
+            String responseJson = gson.toJson(response);
+            logger.debug("Sent: {}", responseJson);
+            sendTextSafe(session, responseJson);
 
         } catch (JsonSyntaxException e) {
-            String userId = (String) session.getUserProperties().get("userId");
-            logger.error("Invalid JSON - session: {}, user: {}, error: {}", session.getId(), userId, e.getMessage());
+            logger.error("Invalid JSON - session: {}, message: {}, error: {}", session.getId(), msgJson, e.getMessage());
             sendTextSafe(session, "{\"error\":\"" + ChatConstants.ERROR_INVALID_JSON + "\"}");
         } catch (Exception ex) {
-            String userId = (String) session.getUserProperties().get("userId");
-            logger.error("Processing error - session: {}, user: {}, error: {}", session.getId(), userId, ex.getMessage(), ex);
+            logger.error("Processing error - session: {}, message: {}, error: {}", session.getId(), msgJson, ex.getMessage(), ex);
             sendTextSafe(session, "{\"error\":\"" + ChatConstants.ERROR_INTERNAL_SERVER + "\"}");
         }
     }
