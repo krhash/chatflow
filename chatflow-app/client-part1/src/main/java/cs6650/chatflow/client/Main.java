@@ -38,6 +38,7 @@ public class Main {
         AtomicInteger warmupConnections = new AtomicInteger(0);
 
         long startTime = System.currentTimeMillis();
+        System.out.println("System start time: " + startTime);
 
         try {
             // Phase 1: Warmup
@@ -62,6 +63,10 @@ public class Main {
             logger.error("Fatal error during execution: {}", e.getMessage(), e);
             System.exit(1);
         }
+
+        long endTime = System.currentTimeMillis();
+        System.out.println("System end time: " + endTime);
+        System.out.println("Total time elapsed: " + (endTime - startTime) + " ms");
     }
 
     private static void printHeader() {
