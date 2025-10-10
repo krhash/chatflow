@@ -1,0 +1,362 @@
+package cs6650.chatflow.client.coordinator;
+
+import cs6650.chatflow.client.commons.Constants;
+import cs6650.chatflow.client.model.MainPhaseResult;
+import cs6650.chatflow.client.queues.DeadLetterQueue;
+import cs6650.chatflow.client.queues.MessageQueue;
+import cs6650.chatflow.client.queues.ResponseQueue;
+import cs6650.chatflow.client.workers.*;
+import cs6650.chatflow.client.util.*;
+import cs6650.chatflow.client.websocket.WebSocketConnectionPool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Map;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * Main phase executor coordinating producer-consumer architecture.
+ * Manages all components for high-throughput WebSocket testing.
+ */
+public class MainPhaseExecutor {
+    private static final Logger logger = LoggerFactory.getLogger(MainPhaseExecutor.class);
+
+    private final String wsBaseUri;
+    private final int totalMessages;
+
+    // Core components
+    private MessageQueue messageQueue;
+    private ResponseQueue responseQueue;
+    private DeadLetterQueue deadLetterQueue;
+    private MessageTimer messageTimer;
+    private MetricsCollector metricsCollector;
+    private WebSocketConnectionPool connectionPool;
+
+    // Threads and executors
+    private ExecutorService producerExecutor;
+    private ExecutorService consumerExecutor;
+    private ExecutorService responseExecutor;
+    private ExecutorService monitorExecutor;
+    private ExecutorService retryExecutor;
+
+    // Counters
+    private final AtomicInteger messagesSent = new AtomicInteger(0);
+    private final AtomicInteger messagesReceived = new AtomicInteger(0);
+    private final AtomicInteger reconnections = new AtomicInteger(0);
+
+    /**
+     * Creates main phase executor.
+     * @param wsBaseUri WebSocket base URI (ws://server:port/servlet-context)
+     * @param totalMessages number of messages to send in main phase
+     */
+    public MainPhaseExecutor(String wsBaseUri, int totalMessages) {
+        this.wsBaseUri = wsBaseUri;
+        this.totalMessages = totalMessages;
+    }
+
+    /**
+     * Executes the main phase load test.
+     * @return result containing messages received and test end time
+     */
+    public MainPhaseResult execute() throws URISyntaxException, InterruptedException, IOException {
+        System.out.println("\n=================================================================");
+        System.out.println("                     ChatFlow Main Phase");
+        System.out.println("              High-Throughput Load Testing");
+        System.out.println("=================================================================\n");
+
+        System.out.println(String.format("Connected to server: %s", wsBaseUri) );
+
+        long startTime = System.currentTimeMillis();
+
+        try {
+            // Initialize components
+            initializeComponents();
+
+            // Start all threads
+            startThreads();
+
+            // Wait for completion
+            waitForCompletion();
+
+            // Process dead letter queue
+            processDeadLetterQueue();
+
+            // Capture test end time before shutdown
+            long testEndTime = System.currentTimeMillis();
+
+            // Generate report
+            generateReport(startTime);
+
+            // Return result with messages received, failed, test end time, and connection stats
+            int failedMessages = deadLetterQueue.size();
+            int totalConnections = connectionPool.getPoolSize();
+            int openConnections = connectionPool.getOpenConnectionCount();
+            int reconnectionCount = connectionPool.getReconnectionCount();
+            MetricsCollector.StatisticalMetrics stats = metricsCollector.calculateStatistics();
+            return new MainPhaseResult(messagesReceived.get(), failedMessages, testEndTime,
+                                     totalConnections, openConnections, reconnectionCount, stats);
+
+        } finally {
+            // Cleanup
+            shutdown();
+        }
+    }
+
+    /**
+     * Initializes all components.
+     */
+    private void initializeComponents() throws URISyntaxException, InterruptedException, IOException {
+        logger.info("Initializing main phase components...");
+
+        // Create queues and utilities
+        messageQueue = new MessageQueue();
+        responseQueue = new ResponseQueue();
+        deadLetterQueue = new DeadLetterQueue();
+        messageTimer = new MessageTimer();
+        metricsCollector = new MetricsCollector();
+
+        // Create connection pool with random room IDs per connection
+        String baseUri = wsBaseUri + Constants.CHAT_ENDPOINT;
+        logger.debug("Creating WebSocket connection pool with base URI: {}", baseUri);
+        connectionPool = new WebSocketConnectionPool(baseUri, responseQueue, reconnections);
+
+        logger.info("Components initialized successfully");
+    }
+
+    /**
+     * Starts all threads.
+     */
+    private void startThreads() {
+        logger.info("Starting main phase threads...");
+
+        // Create executors
+        logger.debug("Creating thread executors...");
+        producerExecutor = Executors.newSingleThreadExecutor(r -> new Thread(r, "MessageProducer"));
+        consumerExecutor = Executors.newFixedThreadPool(Constants.MAIN_PHASE_CONSUMER_THREADS,
+            r -> new Thread(r, "MessageConsumer-" + r.hashCode()));
+        responseExecutor = Executors.newFixedThreadPool(Constants.RESPONSE_THREAD_POOL_SIZE,
+            r -> new Thread(r, "ResponseProcessor-" + r.hashCode()));
+        monitorExecutor = Executors.newSingleThreadExecutor(r -> new Thread(r, "TimeoutMonitor"));
+        retryExecutor = Executors.newFixedThreadPool(Constants.RETRY_WORKER_THREADS,
+            r -> new Thread(r, "RetryWorker-" + r.hashCode()));
+
+        // Start producer
+        logger.info("Starting message producer thread...");
+        producerExecutor.submit(new MainPhaseMessageProducer(messageQueue, totalMessages));
+        logger.info("Started message producer thread");
+
+        // Start consumers
+        logger.info("Starting {} message consumer threads...", Constants.MAIN_PHASE_CONSUMER_THREADS);
+        for (int i = 0; i < Constants.MAIN_PHASE_CONSUMER_THREADS; i++) {
+            consumerExecutor.submit(new MainPhaseMessageConsumer(messageQueue, connectionPool,
+                messageTimer, metricsCollector, messagesSent, totalMessages));
+        }
+        logger.info("Started {} message consumer threads", Constants.MAIN_PHASE_CONSUMER_THREADS);
+
+        // Start response processors
+        logger.info("Starting {} response processor threads...", Constants.RESPONSE_THREAD_POOL_SIZE);
+        for (int i = 0; i < Constants.RESPONSE_THREAD_POOL_SIZE; i++) {
+            responseExecutor.submit(new MainPhaseResponseWorker(responseQueue, messageTimer,
+                metricsCollector, messagesReceived));
+        }
+        logger.info("Started {} response processor threads", Constants.RESPONSE_THREAD_POOL_SIZE);
+
+        // Start timeout monitor
+        logger.info("Starting timeout monitor thread...");
+        monitorExecutor.submit(new TimeoutMonitor(messageTimer, deadLetterQueue));
+        logger.info("Started timeout monitor thread");
+
+        // Start retry workers
+        logger.info("Starting {} retry worker threads...", Constants.RETRY_WORKER_THREADS);
+        for (int i = 0; i < Constants.RETRY_WORKER_THREADS; i++) {
+            retryExecutor.submit(new MainPhaseRetryWorker(connectionPool, deadLetterQueue));
+        }
+        logger.info("Started {} retry worker threads", Constants.RETRY_WORKER_THREADS);
+
+        logger.info("All main phase threads started successfully");
+    }
+
+    /**
+     * Waits for test completion - all messages sent AND all responses received or timed out.
+     */
+    private void waitForCompletion() throws InterruptedException {
+        logger.info("Waiting for message generation and processing to complete...");
+
+        long startWaitTime = System.currentTimeMillis();
+        long maxWaitTime = Constants.MAIN_PHASE_RESPONSE_TIMEOUT_MINUTES * 60 * 1000;
+
+        // Wait for producer to finish
+        producerExecutor.shutdown();
+        producerExecutor.awaitTermination(10, TimeUnit.MINUTES);
+
+        // Wait for message queue to be empty (all messages sent)
+        while (messageQueue.size() > 0) {
+            Thread.sleep(1000);
+            logger.debug("Waiting for queue to empty: {} messages remaining", messageQueue.size());
+        }
+
+        logger.info("All messages sent. Waiting for all responses...");
+
+        // Wait until all sent messages have received responses OR global timeout reached
+        long lastProgressTime = System.currentTimeMillis();
+        while (true) {
+            int sent = messagesSent.get();
+            int received = messagesReceived.get();
+            int pending = sent - received;
+
+            // Check if all sent messages have received responses
+            if (received >= sent) {
+                logger.info("All {} messages have received responses - test complete", sent);
+                break;
+            }
+
+            // Check for global timeout
+            long elapsed = System.currentTimeMillis() - startWaitTime;
+            if (elapsed > maxWaitTime) {
+                logger.warn("Global timeout reached after {} minutes. {}/{} messages received, {}/{} messages still pending responses",
+                    elapsed / 60000.0, received, sent, pending, sent);
+                break;
+            }
+
+            // Progress reporting - every 30 seconds
+            long currentTime = System.currentTimeMillis();
+            if ((currentTime - lastProgressTime) > 30000) {
+                logger.info("Waiting for responses: {} sent, {} received, {} pending",
+                    sent, received, pending);
+                lastProgressTime = currentTime;
+            }
+
+            Thread.sleep(1000);
+        }
+
+        logger.info("Main processing complete");
+    }
+
+    /**
+     * Processes dead letter queue for final status reporting.
+     * By this point, TimeoutMonitor has added timed-out messages and
+     * RetryWorkers have attempted retries. Any remaining messages
+     * have permanently failed.
+     */
+    private void processDeadLetterQueue() {
+        logger.info("Checking dead letter queue status...");
+
+        int failedCount = deadLetterQueue.size();
+        if (failedCount > 0) {
+            logger.warn("{} messages have permanently failed after all retry attempts", failedCount);
+        } else {
+            logger.info("No pending messages found in dead letter queue");
+        }
+    }
+
+    /**
+     * Generates final performance report.
+     */
+    private void generateReport(long startTime) {
+        long endTime = System.currentTimeMillis();
+        double durationSeconds = (endTime - startTime) / 1000.0;
+
+        int sent = messagesSent.get();
+        int received = messagesReceived.get();
+        double throughput = received > 0 ? received / durationSeconds : 0;
+
+        // Get statistical metrics
+        MetricsCollector.StatisticalMetrics stats = metricsCollector.calculateStatistics();
+
+        System.out.println("\n=================================================================");
+        System.out.println("                     Main Phase Results");
+        System.out.println("-----------------------------------------------------------------");
+
+        // Configuration
+        System.out.println(" CONFIGURATION:");
+        System.out.printf("   Target Messages:     %d%n", totalMessages);
+        System.out.printf("   Producer Threads:    %d%n", 1);
+        System.out.printf("   Consumer Threads:    %d%n", Constants.MAIN_PHASE_CONSUMER_THREADS);
+        System.out.printf("   Response Threads:    %d%n", Constants.RESPONSE_THREAD_POOL_SIZE);
+        System.out.printf("   Retry Workers:       %d%n", Constants.RETRY_WORKER_THREADS);
+        System.out.printf("   Timeout Monitor:     %d%n", 1);
+        System.out.printf("   Connection Pool:     %d%n", Constants.MAIN_PHASE_CONNECTION_POOL_SIZE);
+        System.out.printf("   Message Queue:       %d%n", Constants.MESSAGE_QUEUE_CAPACITY);
+        System.out.printf("   Response Queue:      %d%n", Constants.RESPONSE_QUEUE_CAPACITY);
+        System.out.printf("   Dead Letter Queue:   %d%n", Constants.DEAD_LETTER_QUEUE_CAPACITY);
+        System.out.printf("   Message Timeout:     %d sec%n", Constants.MESSAGE_TIMEOUT_MILLIS / 1000);
+        System.out.println();
+
+        // Results
+        System.out.println(" RESULTS:");
+        System.out.printf("   Messages Sent:       %d%n", sent);
+        System.out.printf("   Messages Received:   %d%n", received);
+        System.out.printf("   Failed Messages:     %d%n", deadLetterQueue.size());
+        System.out.printf("   Success Rate:        %.1f%%%n",
+            sent > 0 ? (received * 100.0 / sent) : 0.0);
+        System.out.println();
+
+        // Performance Metrics
+        System.out.println(" PERFORMANCE METRICS:");
+        System.out.printf("   Duration:            %.2fs%n", durationSeconds);
+        System.out.printf("   Throughput:          %.0f msg/sec%n", throughput);
+        System.out.printf("   Mean Latency:        %.2f ms%n", stats.meanLatency);
+        System.out.printf("   Median Latency:      %.2f ms%n", stats.medianLatency);
+        System.out.printf("   95th Percentile:     %.2f ms%n", stats.percentile95);
+        System.out.printf("   99th Percentile:     %.2f ms%n", stats.percentile99);
+        System.out.printf("   Min Latency:         %d ms%n", stats.minLatency);
+        System.out.printf("   Max Latency:         %d ms%n", stats.maxLatency);
+        System.out.println();
+
+        // Room-based Throughput
+        System.out.println(" ROOM-BASED THROUGHPUT:");
+        stats.roomThroughput.forEach((roomId, count) ->
+            System.out.printf("   Room %d:             %d messages%n", roomId, count));
+        System.out.println();
+
+        // Message Type Distribution
+        System.out.println(" MESSAGE TYPE DISTRIBUTION:");
+        stats.messageTypeDistribution.forEach((type, count) ->
+            System.out.printf("   %s:                  %d messages%n", type, count));
+
+        System.out.println("=================================================================\n");
+    }
+
+    /**
+     * Shuts down all components.
+     */
+    private void shutdown() {
+        System.out.println("Shutting down main phase components...");
+
+        // Shutdown executors
+        shutdownExecutor(producerExecutor, "Producer");
+        shutdownExecutor(consumerExecutor, "Consumer");
+        shutdownExecutor(responseExecutor, "Response");
+        shutdownExecutor(monitorExecutor, "Monitor");
+        shutdownExecutor(retryExecutor, "Retry");
+
+        // Close connections
+        if (connectionPool != null) {
+            connectionPool.closeAll();
+        }
+
+        System.out.println("Shutdown complete");
+    }
+
+    /**
+     * Helper method to shutdown executor.
+     */
+    private void shutdownExecutor(ExecutorService executor, String name) {
+        if (executor != null) {
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+}
