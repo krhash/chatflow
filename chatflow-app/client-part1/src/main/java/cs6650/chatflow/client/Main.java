@@ -56,7 +56,7 @@ public class Main {
 
             // Final Summary
             generateFinalSummary(startTime, Constants.TOTAL_MESSAGES, totalMessagesReceived.get(),
-                               mainPhaseResult, warmupReconnections.get(), warmupConnections.get());
+                               mainPhaseResult, warmupReconnections.get(), warmupConnections.get(), wsBaseUri);
 
         } catch (Exception e) {
             logger.error("Fatal error during execution: {}", e.getMessage(), e);
@@ -91,7 +91,7 @@ public class Main {
      * Generates final overall test summary combining warmup and main phases.
      */
     private static void generateFinalSummary(long startTime, int totalSent, int warmupReceived,
-                                           MainPhaseResult mainPhaseResult, int warmupReconnections, int warmupConnections) {
+                                           MainPhaseResult mainPhaseResult, int warmupReconnections, int warmupConnections, String wsBaseUri) {
         long endTime = mainPhaseResult != null ? mainPhaseResult.getTestEndTime() : System.currentTimeMillis();
         int mainPhaseReceived = mainPhaseResult != null ? mainPhaseResult.getMessagesReceived() : 0;
         int mainPhaseFailed = mainPhaseResult != null ? mainPhaseResult.getMessagesFailed() : 0;
@@ -108,17 +108,20 @@ public class Main {
 
         System.out.println();
         System.out.println("=================================================================");
-        System.out.println("                   ChatFlow Test Complete");
+        System.out.println("                   ChatFlow Part 1 Test Complete");
         System.out.println("=================================================================");
+        System.out.printf("Server base URI: %s%n", wsBaseUri);
+        System.out.println();
 
+        System.out.printf("Warmup websocket connections: %d total connections, %d reconnections%n", warmupConnections, warmupReconnections);
+        System.out.printf("Main phase websocket connections: %d total connections, %d reconnections%n",
+                mainPhaseConnections, mainPhaseReconnections);
         System.out.printf("Number of successful messages sent: %d%n", totalReceived);
         System.out.printf("Number of failed messages: %d%n", totalFailed);
         System.out.printf("Total runtime (wall time): %.2f seconds%n", durationSeconds);
         System.out.printf("Overall throughput: %.0f messages/second%n", throughput);
         System.out.printf("Success rate: %.1f%%%n", successRate);
-        System.out.printf("Warmup websocket connections: %d total connections, %d reconnections%n", warmupConnections, warmupReconnections);
-        System.out.printf("Main phase websocket connections: %d total connections, %d reconnections%n",
-            mainPhaseConnections, mainPhaseReconnections);
+
 
         System.out.println("=================================================================");
         System.out.println();

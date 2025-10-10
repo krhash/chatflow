@@ -40,15 +40,18 @@ public class Constants {
     public static final long MESSAGE_RETRY_INITIAL_DELAY_MILLIS = 100;
     public static final long MESSAGE_RETRY_MAX_DELAY_MILLIS = 2000;
 
+    // Connection reconnection configuration
+    public static final int CONNECTION_RECONNECT_ATTEMPTS = 5;
+
     // Load test configuration
     public static final int TOTAL_MESSAGES = 500_000;
     public static final int WARMUP_TOTAL_MESSAGES = WARMUP_THREADS * MESSAGES_PER_THREAD;
 
     // Main phase configuration
-    public static final int MAIN_PHASE_CONNECTION_POOL_SIZE = 20;
-    public static final int MAIN_PHASE_CONSUMER_THREADS = 20;
-    public static final int RESPONSE_THREAD_POOL_SIZE = 20;
-    public static final int RETRY_WORKER_THREADS = 8;
+    public static final int MAIN_PHASE_CONNECTION_POOL_SIZE = 8;
+    public static final int MAIN_PHASE_CONSUMER_THREADS = 8;
+    public static final int RESPONSE_THREAD_POOL_SIZE = 8;
+    public static final int RETRY_WORKER_THREADS = 4;
     public static final int MESSAGE_QUEUE_CAPACITY = 5000;
     public static final int RESPONSE_QUEUE_CAPACITY = 2000;
     public static final int DEAD_LETTER_QUEUE_CAPACITY = 1000;

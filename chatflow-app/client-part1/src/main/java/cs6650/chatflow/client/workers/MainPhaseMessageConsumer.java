@@ -62,7 +62,6 @@ public class MainPhaseMessageConsumer implements Runnable {
                     // Send message with retry logic
                     sendMessageWithRetry(message);
                 }
-                // If no message available, loop will check completion condition again
             }
 
         } catch (InterruptedException e) {
@@ -88,7 +87,18 @@ public class MainPhaseMessageConsumer implements Runnable {
 
                 // Check if connection is open
                 if (!connection.isOpen()) {
-                    throw new IllegalStateException("WebSocket connection is closed");
+                    // Try to reconnect the failed connection
+                    if (connectionPool.reconnect(connection)) {
+                        // Get the new connection (reconnect replaced it in the pool)
+                        connection = connectionPool.getNextConnection();
+                        if (!connection.isOpen()) {
+                            logger.warn("Connection still closed after reconnection attempt for message {}, skipping", message.getMessageId());
+                            return;
+                        }
+                    } else {
+                        logger.warn("Failed to reconnect connection for message {}, skipping", message.getMessageId());
+                        return;
+                    }
                 }
 
                 // Record send timestamp for timeout tracking
@@ -103,10 +113,6 @@ public class MainPhaseMessageConsumer implements Runnable {
                 // Success - return
                 return;
 
-            } catch (IllegalStateException e) {
-                // Connection closed - don't retry, connection pool should handle this
-                logger.warn("Connection closed for message {}, skipping", message.getMessageId());
-                return;
             } catch (Exception e) {
                 if (attempt == Constants.MESSAGE_RETRY_ATTEMPTS) {
                     // All retries exhausted
