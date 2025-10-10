@@ -155,7 +155,6 @@ public class WebSocketConnectionPool {
      * @return true if reconnection was successful
      */
     public boolean reconnect(ChatflowWebSocketClient connection) {
-        connection.reconnectBlocking();
         // Find the room ID for this connection
         Integer roomId = null;
         for (Map.Entry<Integer, ChatflowWebSocketClient> entry : connections.entrySet()) {
@@ -169,23 +168,11 @@ public class WebSocketConnectionPool {
             return false; // Connection not found in pool
         }
 
-        // Try reconnection with retries
+        // Try reconnection with retries using the built-in reconnectBlocking method
         for (int attempt = 1; attempt <= Constants.CONNECTION_RECONNECT_ATTEMPTS; attempt++) {
             try {
-                // Use the same room ID for reconnection (don't change room assignment)
-                URI serverUri = new URI(String.format("%s/room%d", baseUri, roomId));
-
-                // Create new connection
-                ChatflowWebSocketClient newConnection = new ChatflowWebSocketClient(serverUri, response -> {
-                    // Queue response for asynchronous processing
-                    responseQueue.offer(response);
-                });
-
-                // Attempt to connect
-                newConnection.connectBlocking();
-
-                // Replace the old connection
-                connections.put(roomId, newConnection);
+                // Use the WebSocket client's built-in reconnect method
+                connection.reconnectBlocking();
 
                 // Increment reconnection counter
                 reconnections.incrementAndGet();
