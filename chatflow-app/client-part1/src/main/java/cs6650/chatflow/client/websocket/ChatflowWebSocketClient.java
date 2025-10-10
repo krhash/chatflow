@@ -1,6 +1,8 @@
 package cs6650.chatflow.client.websocket;
 
 import cs6650.chatflow.client.model.MessageResponse;
+import org.java_websocket.WebSocket;
+import org.java_websocket.framing.Framedata;
 import org.java_websocket.handshake.ServerHandshake;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,5 +53,11 @@ public class ChatflowWebSocketClient extends org.java_websocket.client.WebSocket
     @Override
     public void onError(Exception ex) {
         logger.error("WebSocket error: {}", ex.getMessage());
+    }
+
+    @Override
+    public void onWebsocketPing(WebSocket conn, Framedata f) {
+        logger.debug("Websocket Ping: {}", f.toString());
+        super.onWebsocketPing(conn, f);
     }
 }
