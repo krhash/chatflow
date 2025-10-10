@@ -1,5 +1,6 @@
 package cs6650.chatflow.client.workers;
 
+import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.queues.DeadLetterQueue;
 import cs6650.chatflow.client.websocket.WebSocketConnectionPool;
@@ -38,7 +39,7 @@ public class MainPhaseRetryWorker implements Runnable {
 
                 try {
                     logger.debug("Retrying message: {} with up to {} attempts", message.getMessageId(),
-                        cs6650.chatflow.client.commons.Constants.DLQ_RETRY_ATTEMPTS);
+                        Constants.MESSAGE_RETRY_ATTEMPTS);
 
                     // Retry the message up to DLQ_RETRY_ATTEMPTS times with exponential backoff
                     boolean retrySuccess = retryMessageWithBackoff(message);
@@ -75,10 +76,10 @@ public class MainPhaseRetryWorker implements Runnable {
     private boolean retryMessageWithBackoff(ChatMessage message) {
         long delay = cs6650.chatflow.client.commons.Constants.MESSAGE_RETRY_INITIAL_DELAY_MILLIS;
 
-        for (int attempt = 1; attempt <= cs6650.chatflow.client.commons.Constants.DLQ_RETRY_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= Constants.MESSAGE_RETRY_ATTEMPTS; attempt++) {
             try {
                 logger.debug("Retry attempt {}/{} for message: {}", attempt,
-                    cs6650.chatflow.client.commons.Constants.DLQ_RETRY_ATTEMPTS, message.getMessageId());
+                        Constants.MESSAGE_RETRY_ATTEMPTS, message.getMessageId());
 
                 // Attempt to resend the message through the connection pool
                 boolean success = connectionPool.sendMessage(message);
@@ -89,8 +90,8 @@ public class MainPhaseRetryWorker implements Runnable {
                 }
 
                 // If this was the last attempt, don't wait
-                if (attempt == cs6650.chatflow.client.commons.Constants.DLQ_RETRY_ATTEMPTS) {
-                    logger.debug("Retry attempt {} failed for message: {} - all attempts exhausted",
+                if (attempt == Constants.MESSAGE_RETRY_ATTEMPTS) {
+                    logger.error("Retry attempt {} failed for message: {} - all attempts exhausted",
                         attempt, message.getMessageId());
                     break;
                 }
@@ -110,7 +111,7 @@ public class MainPhaseRetryWorker implements Runnable {
                     attempt, message.getMessageId(), e.getMessage());
 
                 // If this was the last attempt, don't wait
-                if (attempt == cs6650.chatflow.client.commons.Constants.DLQ_RETRY_ATTEMPTS) {
+                if (attempt == Constants.MESSAGE_RETRY_ATTEMPTS) {
                     break;
                 }
 

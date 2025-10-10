@@ -11,5 +11,8 @@
         <module name="client-part1" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="client-part1-simplified" target="11" />
+    </bytecodeTargetLevel>
   </component>
 </project>

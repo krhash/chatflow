@@ -44,7 +44,7 @@ public class MainPhaseExecutor {
     // Counters
     private final AtomicInteger messagesSent = new AtomicInteger(0);
     private final AtomicInteger messagesReceived = new AtomicInteger(0);
-    private final Map<String, Long> responseLatencies = new ConcurrentHashMap<>();
+    private final AtomicInteger reconnections = new AtomicInteger(0);
 
     /**
      * Creates main phase executor.
@@ -89,8 +89,13 @@ public class MainPhaseExecutor {
             // Generate report
             generateReport(startTime);
 
-            // Return result with messages received and test end time
-            return new MainPhaseResult(messagesReceived.get(), testEndTime);
+            // Return result with messages received, failed, test end time, and connection stats
+            int failedMessages = deadLetterQueue.size();
+            int totalConnections = connectionPool.getPoolSize();
+            int openConnections = connectionPool.getOpenConnectionCount();
+            int reconnectionCount = connectionPool.getReconnectionCount();
+            return new MainPhaseResult(messagesReceived.get(), failedMessages, testEndTime,
+                                     totalConnections, openConnections, reconnectionCount);
 
         } finally {
             // Cleanup
@@ -110,11 +115,10 @@ public class MainPhaseExecutor {
         deadLetterQueue = new DeadLetterQueue();
         messageTimer = new MessageTimer();
 
-        // Create connection pool - use random room ID like warmup phase
-        int roomId = (int) (Math.random() * Constants.ROOM_COUNT) + 1;
-        URI serverUri = new URI(String.format("%s/chat/room%d", wsBaseUri, roomId));
-        logger.debug("Creating WebSocket connection pool with URI: {}", serverUri);
-        connectionPool = new WebSocketConnectionPool(serverUri, responseQueue);
+        // Create connection pool with random room IDs per connection
+        String baseUri = wsBaseUri + Constants.CHAT_ENDPOINT;
+        logger.debug("Creating WebSocket connection pool with base URI: {}", baseUri);
+        connectionPool = new WebSocketConnectionPool(baseUri, responseQueue, reconnections);
 
         logger.info("Components initialized successfully");
     }
@@ -153,7 +157,7 @@ public class MainPhaseExecutor {
         logger.info("Starting {} response processor threads...", Constants.RESPONSE_THREAD_POOL_SIZE);
         for (int i = 0; i < Constants.RESPONSE_THREAD_POOL_SIZE; i++) {
             responseExecutor.submit(new MainPhaseResponseWorker(responseQueue, messageTimer,
-                messagesReceived, responseLatencies));
+                messagesReceived));
         }
         logger.info("Started {} response processor threads", Constants.RESPONSE_THREAD_POOL_SIZE);
 
@@ -179,7 +183,7 @@ public class MainPhaseExecutor {
         logger.info("Waiting for message generation and processing to complete...");
 
         long startWaitTime = System.currentTimeMillis();
-        long maxWaitTime = 10 * 60 * 1000; // 10 minutes maximum wait time
+        long maxWaitTime = Constants.MAIN_PHASE_RESPONSE_TIMEOUT_MINUTES * 60 * 1000;
 
         // Wait for producer to finish
         producerExecutor.shutdown();
@@ -193,31 +197,33 @@ public class MainPhaseExecutor {
 
         logger.info("All messages sent. Waiting for all responses...");
 
-        // Wait until all responses received OR global timeout reached
+        // Wait until all sent messages have received responses OR global timeout reached
+        long lastProgressTime = System.currentTimeMillis();
         while (true) {
             int sent = messagesSent.get();
             int received = messagesReceived.get();
-            int failed = deadLetterQueue.size();
-            int accountedFor = received + failed;
+            int pending = sent - received;
 
-            // Check if all messages are accounted for
-            if (accountedFor >= sent) {
-                logger.info("All messages accounted for - test complete");
+            // Check if all sent messages have received responses
+            if (received >= sent) {
+                logger.info("All {} messages have received responses - test complete", sent);
                 break;
             }
 
             // Check for global timeout
             long elapsed = System.currentTimeMillis() - startWaitTime;
             if (elapsed > maxWaitTime) {
-                logger.warn("Global timeout reached after {} minutes. {}/{} messages still pending",
-                    elapsed / 60000.0, (sent - accountedFor), sent);
+                logger.warn("Global timeout reached after {} minutes. {}/{} messages received, {}/{} messages still pending responses",
+                    elapsed / 60000.0, received, sent, pending, sent);
                 break;
             }
 
-            // Progress reporting - every 30 seconds to reduce verbosity
-            if ((System.currentTimeMillis() / 1000) % 30 == 0) {
-                logger.info("Waiting for responses: {} sent, {} received, {} failed, {} pending",
-                    sent, received, failed, (sent - accountedFor));
+            // Progress reporting - every 30 seconds
+            long currentTime = System.currentTimeMillis();
+            if ((currentTime - lastProgressTime) > 30000) {
+                logger.info("Waiting for responses: {} sent, {} received, {} pending",
+                    sent, received, pending);
+                lastProgressTime = currentTime;
             }
 
             Thread.sleep(1000);
@@ -227,20 +233,19 @@ public class MainPhaseExecutor {
     }
 
     /**
-     * Processes dead letter queue for final retries.
+     * Processes dead letter queue for final status reporting.
+     * By this point, TimeoutMonitor has added timed-out messages and
+     * RetryWorkers have attempted retries. Any remaining messages
+     * have permanently failed.
      */
     private void processDeadLetterQueue() {
-        logger.info("Processing dead letter queue...");
+        logger.info("Checking dead letter queue status...");
 
         int failedCount = deadLetterQueue.size();
         if (failedCount > 0) {
-            logger.info("Found {} failed messages, attempting final retries...", failedCount);
-
-            // In a real implementation, we would retry these messages
-            // For now, just log them
-            logger.info("Dead letter queue processing complete. {} messages failed permanently.", failedCount);
+            logger.warn("{} messages have permanently failed after all retry attempts", failedCount);
         } else {
-            logger.info("No failed messages found.");
+            logger.info("No pending messages found in dead letter queue");
         }
     }
 
@@ -253,7 +258,7 @@ public class MainPhaseExecutor {
 
         int sent = messagesSent.get();
         int received = messagesReceived.get();
-        double throughput = sent > 0 ? sent / durationSeconds : 0;
+        double throughput = received > 0 ? received / durationSeconds : 0;
 
         System.out.println("\n=================================================================");
         System.out.println("                     Main Phase Results");
@@ -285,21 +290,8 @@ public class MainPhaseExecutor {
         // Performance
         System.out.printf(" Duration:            %.2fs%n", durationSeconds);
         System.out.printf(" Throughput:          %.0f msg/sec%n", throughput);
-        System.out.printf(" Avg Latency:         %.2fms%n", calculateAverageLatency());
 
         System.out.println("=================================================================\n");
-    }
-
-    /**
-     * Calculates average response latency.
-     */
-    private double calculateAverageLatency() {
-        if (responseLatencies.isEmpty()) {
-            return 0.0;
-        }
-
-        long totalLatency = responseLatencies.values().stream().mapToLong(Long::longValue).sum();
-        return (totalLatency / (double) responseLatencies.size()) / 1_000_000.0; // Convert to milliseconds
     }
 
     /**

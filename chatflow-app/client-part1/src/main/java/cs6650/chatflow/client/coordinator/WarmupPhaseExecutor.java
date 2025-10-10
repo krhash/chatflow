@@ -14,23 +14,29 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Coordinator for warmup phase in client-part1.
  * Manages warmup threads that send messages and wait for responses.
  */
-public class WarmupPhaseCoordinator {
-    private static final Logger logger = LoggerFactory.getLogger(WarmupPhaseCoordinator.class);
+public class WarmupPhaseExecutor {
+    private static final Logger logger = LoggerFactory.getLogger(WarmupPhaseExecutor.class);
 
     private final String wsBaseUri;
     private final AtomicInteger totalMessagesSent;
     private final AtomicInteger totalMessagesReceived;
+    private final AtomicInteger warmupReconnections;
+    private final AtomicInteger warmupConnections;
 
     /**
      * Creates warmup coordinator.
      * @param wsBaseUri WebSocket base URI (ws://server:port/servlet-context)
      * @param totalMessagesSent global sent counter
      * @param totalMessagesReceived global received counter
+     * @param warmupReconnections global reconnection counter for warmup phase
+     * @param warmupConnections global connection counter for warmup phase
      */
-    public WarmupPhaseCoordinator(String wsBaseUri, AtomicInteger totalMessagesSent, AtomicInteger totalMessagesReceived) {
+    public WarmupPhaseExecutor(String wsBaseUri, AtomicInteger totalMessagesSent, AtomicInteger totalMessagesReceived, AtomicInteger warmupReconnections, AtomicInteger warmupConnections) {
         this.wsBaseUri = wsBaseUri;
         this.totalMessagesSent = totalMessagesSent;
         this.totalMessagesReceived = totalMessagesReceived;
+        this.warmupReconnections = warmupReconnections;
+        this.warmupConnections = warmupConnections;
     }
 
     /**
@@ -53,7 +59,7 @@ public class WarmupPhaseCoordinator {
                 logger.debug("Creating warmup thread {} with room {}", i + 1, roomId);
                 executorService.submit(new WarmupWorker(wsBaseUri, roomId,
                         Constants.MESSAGES_PER_THREAD, sendCompletionLatch, responseCompletionLatch,
-                        totalMessagesSent, totalMessagesReceived));
+                        totalMessagesSent, totalMessagesReceived, warmupReconnections, warmupConnections));
             } catch (Exception e) {
                 logger.error("Failed to create warmup thread: {}", e.getMessage());
                 System.exit(1);

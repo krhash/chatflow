@@ -33,17 +33,13 @@ public class TimeoutMonitor implements Runnable {
         try {
             while (!Thread.currentThread().isInterrupted()) {
                 // Check for timed-out messages
-                String[] timedOutMessages = messageTimer.getTimedOutMessages();
+                ChatMessage[] timedOutMessages = messageTimer.getTimedOutMessages();
 
                 if (timedOutMessages.length > 0) {
                     logger.info("Found {} timed-out messages", timedOutMessages.length);
 
                     // Move timed-out messages to dead letter queue
-                    for (String messageId : timedOutMessages) {
-                        // In a real implementation, we'd need to store the actual message
-                        // For now, we'll create a placeholder message for demonstration
-                        ChatMessage failedMessage = new ChatMessage(messageId, 0, "unknown",
-                            "Message timed out", "timeout", "TIMEOUT");
+                    for (ChatMessage failedMessage : timedOutMessages) {
                         deadLetterQueue.add(failedMessage);
                     }
 

@@ -6,7 +6,7 @@ import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.util.MessageGenerator;
 
 import cs6650.chatflow.client.model.MessageResponse;
-import cs6650.chatflow.client.websocket.WebSocketClient;
+import cs6650.chatflow.client.websocket.ChatflowWebSocketClient;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -25,15 +25,16 @@ public class WarmupWorker implements Runnable {
     private static final Gson gson = new Gson();
 
     private final int totalMessages;
-    private final String wsBaseUri;
-    private final String roomId;
     private final URI uri;
     private final Map<String, Long> sentMessages;
     private final Map<String, Long> responseLatencies;
+    private final Map<String, ChatMessage> pendingMessages;
     private final CountDownLatch sendCompletionLatch;
     private final CountDownLatch responseCompletionLatch;
     private final AtomicInteger totalMessagesSent;
     private final AtomicInteger totalMessagesReceived;
+    private final AtomicInteger reconnections;
+    private final AtomicInteger connections;
 
     // Current connection's response latch
     private CountDownLatch currentResponseLatch;
@@ -68,19 +69,63 @@ public class WarmupWorker implements Runnable {
                         int totalMessages, CountDownLatch sendCompletionLatch,
                         CountDownLatch responseCompletionLatch,
                         AtomicInteger totalMessagesSent, AtomicInteger totalMessagesReceived) throws URISyntaxException {
+        this(wsBaseUri, roomId, totalMessages, sendCompletionLatch, responseCompletionLatch,
+             totalMessagesSent, totalMessagesReceived, null);
+    }
+
+    /**
+     * Creates thread with global message counters and reconnection tracking.
+     * @param wsBaseUri WebSocket base URI (ws://server:port/servlet-context)
+     * @param roomId chat room identifier
+     * @param totalMessages number of messages to send
+     * @param sendCompletionLatch latch for send completion coordination
+     * @param responseCompletionLatch latch for response completion coordination
+     * @param totalMessagesSent global counter for sent messages
+     * @param totalMessagesReceived global counter for received messages
+     * @param reconnections global counter for reconnection attempts
+     * @throws URISyntaxException if URI construction fails
+     */
+    public WarmupWorker(String wsBaseUri, String roomId,
+                        int totalMessages, CountDownLatch sendCompletionLatch,
+                        CountDownLatch responseCompletionLatch,
+                        AtomicInteger totalMessagesSent, AtomicInteger totalMessagesReceived,
+                        AtomicInteger reconnections) throws URISyntaxException {
+        this(wsBaseUri, roomId, totalMessages, sendCompletionLatch, responseCompletionLatch,
+             totalMessagesSent, totalMessagesReceived, reconnections, null);
+    }
+
+    /**
+     * Creates thread with global message counters, reconnection tracking, and connection counting.
+     * @param wsBaseUri WebSocket base URI (ws://server:port/servlet-context)
+     * @param roomId chat room identifier
+     * @param totalMessages number of messages to send
+     * @param sendCompletionLatch latch for send completion coordination
+     * @param responseCompletionLatch latch for response completion coordination
+     * @param totalMessagesSent global counter for sent messages
+     * @param totalMessagesReceived global counter for received messages
+     * @param reconnections global counter for reconnection attempts
+     * @param connections global counter for successful connections
+     * @throws URISyntaxException if URI construction fails
+     */
+    public WarmupWorker(String wsBaseUri, String roomId,
+                        int totalMessages, CountDownLatch sendCompletionLatch,
+                        CountDownLatch responseCompletionLatch,
+                        AtomicInteger totalMessagesSent, AtomicInteger totalMessagesReceived,
+                        AtomicInteger reconnections, AtomicInteger connections) throws URISyntaxException {
         this.totalMessages = totalMessages;
-        this.wsBaseUri = wsBaseUri;
-        this.roomId = roomId;
         this.sendCompletionLatch = sendCompletionLatch;
         this.responseCompletionLatch = responseCompletionLatch;
         this.totalMessagesSent = totalMessagesSent;
         this.totalMessagesReceived = totalMessagesReceived;
+        this.reconnections = reconnections;
+        this.connections = connections;
 
         // Pre-initialize objects
         this.uri = new URI(String.format("%s/chat/%s", wsBaseUri, roomId));
         // Pre-size HashMaps to avoid resizing (1000 messages / 0.75 load factor = ~1333 capacity)
         this.sentMessages = new ConcurrentHashMap<>(1400);
         this.responseLatencies = new ConcurrentHashMap<>(1400);
+        this.pendingMessages = new ConcurrentHashMap<>(1400);
     }
 
     @Override
@@ -91,7 +136,7 @@ public class WarmupWorker implements Runnable {
 
         // Step 1: Attempt to connect and send messages with reconnection on failure
         while (messagesSent < totalMessages && reconnectAttempt < Constants.MAX_RECONNECT_ATTEMPTS) {
-            WebSocketClient client = null;
+            ChatflowWebSocketClient client = null;
             try {
                 // Step 2: Prepare for message sending
                 prepareForSending(messagesSent);
@@ -111,9 +156,12 @@ public class WarmupWorker implements Runnable {
                 // Step 6: Wait for all responses
                 waitForAllResponses(client);
 
-                // Step 7: Clean shutdown
-                cleanup(client, "warmup complete");
-                break; // Success - exit retry loop
+                // Step 7: Retry any timed-out messages
+                retryTimedOutMessages(client);
+
+                // Step 8: Clean shutdown
+                cleanup(client);
+                break; // Success
 
             } catch (Exception e) {
                 // Step 8: Handle connection failure - attempt reconnection
@@ -148,7 +196,7 @@ public class WarmupWorker implements Runnable {
      * @return connected WebSocket client
      * @throws Exception if connection fails
      */
-    private WebSocketClient connectToServer(int messagesSent) throws Exception {
+    private ChatflowWebSocketClient connectToServer(int messagesSent) throws Exception {
         currentResponseLatch = new CountDownLatch(totalMessages - messagesSent);
 
         // Create response handler for warmup phase
@@ -163,6 +211,8 @@ public class WarmupWorker implements Runnable {
                         long latencyNanos = response.getReceivedTimestampNanos() - sentTime;
                         responseLatencies.put(responseMessage.getMessageId(), latencyNanos);
                     }
+                    // Remove from pending - response received successfully
+                    pendingMessages.remove(responseMessage.getMessageId());
                 }
 
                 // Increment global counter
@@ -180,8 +230,14 @@ public class WarmupWorker implements Runnable {
             }
         };
 
-        WebSocketClient client = new WebSocketClient(uri, responseHandler);
+        ChatflowWebSocketClient client = new ChatflowWebSocketClient(uri, responseHandler);
         client.connectBlocking();
+
+        // Track successful connection
+        if (connections != null) {
+            connections.incrementAndGet();
+        }
+
         return client;
     }
 
@@ -191,7 +247,7 @@ public class WarmupWorker implements Runnable {
      * @param messagesSent number of messages already sent
      * @return updated count of messages sent
      */
-    private int sendAllMessages(WebSocketClient client, int messagesSent) {
+    private int sendAllMessages(ChatflowWebSocketClient client, int messagesSent) {
         for (int i = messagesSent; i < totalMessages; i++) {
             try {
                 sendMessageWithRetry(client, MessageGenerator.generateRandomMessage());
@@ -214,7 +270,7 @@ public class WarmupWorker implements Runnable {
      * @param message message to send
      * @throws Exception if all retry attempts fail
      */
-    private void sendMessageWithRetry(WebSocketClient client, ChatMessage message) throws Exception {
+    private void sendMessageWithRetry(ChatflowWebSocketClient client, ChatMessage message) throws Exception {
         String messageJson = gson.toJson(message);
         long delay = Constants.MESSAGE_RETRY_INITIAL_DELAY_MILLIS;
 
@@ -225,8 +281,9 @@ public class WarmupWorker implements Runnable {
                     throw new IllegalStateException("WebSocket connection is closed");
                 }
 
-                // Record send time and send message
+                // Record send time and track pending message
                 sentMessages.put(message.getMessageId(), System.nanoTime());
+                pendingMessages.put(message.getMessageId(), message);
                 client.send(messageJson);
 
                 // Increment global counter
@@ -263,8 +320,8 @@ public class WarmupWorker implements Runnable {
      * @param client WebSocket client (for compatibility)
      * @throws InterruptedException if thread is interrupted
      */
-    private void waitForAllResponses(WebSocketClient client) throws InterruptedException {
-        boolean allReceived = currentResponseLatch.await(Constants.RESPONSE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+    private void waitForAllResponses(ChatflowWebSocketClient client) throws InterruptedException {
+        boolean allReceived = currentResponseLatch.await(Constants.WARMUP_RESPONSE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
 
         if (!allReceived) {
             System.err.printf("Thread %s timed out waiting for responses. Received %d/%d%n",
@@ -274,13 +331,13 @@ public class WarmupWorker implements Runnable {
 
     /**
      * Cleans up WebSocket connection.
+     *
      * @param client WebSocket client to close
-     * @param reason close reason for logging
      * @throws Exception if close operation fails
      */
-    private void cleanup(WebSocketClient client, String reason) throws Exception {
+    private void cleanup(ChatflowWebSocketClient client) throws Exception {
         if (client != null) {
-            client.close(1000, reason);
+            client.close(1000, "warmup complete");
         }
     }
 
@@ -290,12 +347,17 @@ public class WarmupWorker implements Runnable {
      * @param e exception that caused failure
      * @param client WebSocket client to clean up
      */
-    private void handleConnectionFailure(int attempt, Exception e, WebSocketClient client) {
+    private void handleConnectionFailure(int attempt, Exception e, ChatflowWebSocketClient client) {
         System.err.printf("Thread %s connection failed on attempt %d: %s%n",
                 Thread.currentThread().getName(), attempt, e.getMessage());
 
         if (client != null) {
             client.close();
+        }
+
+        // Track reconnection attempt
+        if (reconnections != null) {
+            reconnections.incrementAndGet();
         }
 
         // Exponential backoff before retry
@@ -306,6 +368,87 @@ public class WarmupWorker implements Runnable {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    /**
+     * Retries messages that timed out waiting for responses.
+     * @param client WebSocket client to use for retries
+     */
+    private void retryTimedOutMessages(ChatflowWebSocketClient client) {
+        if (pendingMessages.isEmpty()) {
+            return; // All messages received responses
+        }
+
+        System.out.printf("Thread %s retrying %d timed-out messages...%n",
+            Thread.currentThread().getName(), pendingMessages.size());
+
+        int retrySuccessCount = 0;
+        for (ChatMessage message : pendingMessages.values()) {
+            if (retryMessageWithBackoff(client, message)) {
+                retrySuccessCount++;
+            }
+        }
+
+        int remainingFailed = pendingMessages.size();
+        if (remainingFailed > 0) {
+            System.err.printf("Thread %s: %d messages failed permanently after retry%n",
+                Thread.currentThread().getName(), remainingFailed);
+        } else {
+            System.out.printf("Thread %s: All %d timed-out messages successfully retried%n",
+                Thread.currentThread().getName(), retrySuccessCount);
+        }
+    }
+
+    /**
+     * Retries a single message with exponential backoff.
+     * @param client WebSocket client
+     * @param message message to retry
+     * @return true if retry succeeded, false if failed
+     */
+    private boolean retryMessageWithBackoff(ChatflowWebSocketClient client, ChatMessage message) {
+        long delay = Constants.MESSAGE_RETRY_INITIAL_DELAY_MILLIS;
+
+        for (int attempt = 1; attempt <= Constants.MESSAGE_RETRY_ATTEMPTS; attempt++) {
+            try {
+                if (!client.isOpen()) {
+                    System.err.printf("Client closed during retry attempt %d for message %s%n",
+                        attempt, message.getMessageId());
+                    return false;
+                }
+
+                // Update send timestamp for latency tracking
+                sentMessages.put(message.getMessageId(), System.nanoTime());
+
+                // Send message
+                String messageJson = gson.toJson(message);
+                client.send(messageJson);
+
+                // Wait for response with timeout
+                Thread.sleep(1000); // Wait 1 second for response
+
+                // Check if response was received (message removed from pending)
+                if (!pendingMessages.containsKey(message.getMessageId())) {
+                    return true; // Success
+                }
+
+            } catch (Exception e) {
+                System.err.printf("Retry attempt %d failed for message %s: %s%n",
+                    attempt, message.getMessageId(), e.getMessage());
+            }
+
+            // Wait before next attempt (except on last attempt)
+            if (attempt < Constants.MESSAGE_RETRY_ATTEMPTS) {
+                try {
+                    Thread.sleep(delay);
+                    delay = Math.min(delay * 2, Constants.MESSAGE_RETRY_MAX_DELAY_MILLIS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+
+        return false; // All attempts failed
     }
 
     /**

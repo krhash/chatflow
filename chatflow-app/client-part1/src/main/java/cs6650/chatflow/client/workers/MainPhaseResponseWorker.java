@@ -8,12 +8,11 @@ import cs6650.chatflow.client.queues.ResponseQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Processes WebSocket responses asynchronously.
- * Updates latency tracking and message counters.
+ * Updates message counters and timeout tracking.
  */
 public class MainPhaseResponseWorker implements Runnable {
     private static final Logger logger = LoggerFactory.getLogger(MainPhaseResponseWorker.class);
@@ -21,7 +20,6 @@ public class MainPhaseResponseWorker implements Runnable {
     private final ResponseQueue responseQueue;
     private final MessageTimer messageTimer;
     private final AtomicInteger messagesReceived;
-    private final Map<String, Long> responseLatencies;
     private final Gson gson = new Gson();
 
     /**
@@ -29,14 +27,12 @@ public class MainPhaseResponseWorker implements Runnable {
      * @param responseQueue queue to process responses from
      * @param messageTimer timer for tracking message timeouts
      * @param messagesReceived global counter for received messages
-     * @param responseLatencies map to store response latencies
      */
     public MainPhaseResponseWorker(ResponseQueue responseQueue, MessageTimer messageTimer,
-                                   AtomicInteger messagesReceived, Map<String, Long> responseLatencies) {
+                                   AtomicInteger messagesReceived) {
         this.responseQueue = responseQueue;
         this.messageTimer = messageTimer;
         this.messagesReceived = messagesReceived;
-        this.responseLatencies = responseLatencies;
     }
 
     @Override
@@ -70,10 +66,6 @@ public class MainPhaseResponseWorker implements Runnable {
             if (message.getMessageId() != null) {
                 // Record response received - this removes from timeout tracking
                 messageTimer.recordMessageResponse(message.getMessageId());
-
-                // Calculate and store latency if we have send timestamp
-                // Note: In current implementation, latency tracking is handled separately
-                // This ensures proper message correlation and timeout management
                 messagesReceived.incrementAndGet();
             }
 

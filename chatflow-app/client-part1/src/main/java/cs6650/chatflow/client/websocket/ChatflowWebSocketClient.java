@@ -12,8 +12,8 @@ import java.util.function.Consumer;
  * Unified WebSocket client with configurable response handling.
  * Uses a Consumer to handle responses, allowing different behaviors for warmup vs main phase.
  */
-public class WebSocketClient extends org.java_websocket.client.WebSocketClient {
-    private static final Logger logger = LoggerFactory.getLogger(WebSocketClient.class);
+public class ChatflowWebSocketClient extends org.java_websocket.client.WebSocketClient {
+    private static final Logger logger = LoggerFactory.getLogger(ChatflowWebSocketClient.class);
 
     private final Consumer<MessageResponse> responseHandler;
 
@@ -22,7 +22,7 @@ public class WebSocketClient extends org.java_websocket.client.WebSocketClient {
      * @param serverUri WebSocket server URI
      * @param responseHandler function to call when responses are received
      */
-    public WebSocketClient(URI serverUri, Consumer<MessageResponse> responseHandler) {
+    public ChatflowWebSocketClient(URI serverUri, Consumer<MessageResponse> responseHandler) {
         super(serverUri);
         this.responseHandler = responseHandler;
     }

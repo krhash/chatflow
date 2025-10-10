@@ -1,9 +1,9 @@
 package cs6650.chatflow.client;
 
 import cs6650.chatflow.client.commons.Constants;
-import cs6650.chatflow.client.coordinator.MainPhaseCoordinator;
+import cs6650.chatflow.client.coordinator.MainPhaseExecutor;
 import cs6650.chatflow.client.model.MainPhaseResult;
-import cs6650.chatflow.client.coordinator.WarmupPhaseCoordinator;
+import cs6650.chatflow.client.coordinator.WarmupPhaseExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,25 +34,29 @@ public class Main {
         // Global counters shared between phases
         AtomicInteger totalMessagesSent = new AtomicInteger(0);
         AtomicInteger totalMessagesReceived = new AtomicInteger(0);
+        AtomicInteger warmupReconnections = new AtomicInteger(0);
+        AtomicInteger warmupConnections = new AtomicInteger(0);
 
         long startTime = System.currentTimeMillis();
 
         try {
             // Phase 1: Warmup
             logger.info("Starting Warmup Phase ...");
-            WarmupPhaseCoordinator warmupPhaseCoordinator = new WarmupPhaseCoordinator(
-                wsBaseUri, totalMessagesSent, totalMessagesReceived);
-            warmupPhaseCoordinator.execute();
+            WarmupPhaseExecutor warmupPhaseExecutor = new WarmupPhaseExecutor(
+                wsBaseUri, totalMessagesSent, totalMessagesReceived, warmupReconnections, warmupConnections);
+            warmupPhaseExecutor.execute();
 
             // Phase 2: Main Load Test
             logger.info("Starting Main Phase ...");
-            MainPhaseCoordinator mainPhaseCoordinator = new MainPhaseCoordinator(
-                wsBaseUri, totalMessagesSent, totalMessagesReceived);
-            MainPhaseResult mainPhaseResult = mainPhaseCoordinator.execute();
+
+            MainPhaseExecutor mainPhaseExecutor = new MainPhaseExecutor(wsBaseUri, Constants.TOTAL_MESSAGES - Constants.WARMUP_TOTAL_MESSAGES);
+            MainPhaseResult mainPhaseResult = mainPhaseExecutor.execute();
+
+            logger.info("Main phase completed successfully");
 
             // Final Summary
             generateFinalSummary(startTime, Constants.TOTAL_MESSAGES, totalMessagesReceived.get(),
-                               mainPhaseResult);
+                               mainPhaseResult, warmupReconnections.get(), warmupConnections.get());
 
         } catch (Exception e) {
             logger.error("Fatal error during execution: {}", e.getMessage(), e);
@@ -87,31 +91,34 @@ public class Main {
      * Generates final overall test summary combining warmup and main phases.
      */
     private static void generateFinalSummary(long startTime, int totalSent, int warmupReceived,
-                                           MainPhaseResult mainPhaseResult) {
+                                           MainPhaseResult mainPhaseResult, int warmupReconnections, int warmupConnections) {
         long endTime = mainPhaseResult != null ? mainPhaseResult.getTestEndTime() : System.currentTimeMillis();
         int mainPhaseReceived = mainPhaseResult != null ? mainPhaseResult.getMessagesReceived() : 0;
+        int mainPhaseFailed = mainPhaseResult != null ? mainPhaseResult.getMessagesFailed() : 0;
         int totalReceived = warmupReceived + mainPhaseReceived;
+        int totalFailed = mainPhaseFailed; // Only main phase has failures tracked
 
         double durationSeconds = (endTime - startTime) / 1000.0;
-        double throughput = totalSent > 0 ? totalSent / durationSeconds : 0;
+        double throughput = totalReceived > 0 ? totalReceived / durationSeconds : 0;
         double successRate = totalSent > 0 ? (totalReceived * 100.0) / totalSent : 0;
+
+        // Connection statistics
+        int mainPhaseConnections = mainPhaseResult != null ? mainPhaseResult.getTotalConnections() : 0;
+        int mainPhaseReconnections = mainPhaseResult != null ? mainPhaseResult.getReconnections() : 0;
 
         System.out.println();
         System.out.println("=================================================================");
         System.out.println("                   ChatFlow Test Complete");
-        System.out.println("-----------------------------------------------------------------");
+        System.out.println("=================================================================");
 
-        // Overall Results
-        System.out.println(" OVERALL RESULTS:");
-        System.out.printf("   Total Messages:     %d%n", totalSent);
-        System.out.printf("   Messages Received:  %d%n", totalReceived);
-        System.out.printf("   Success Rate:       %.1f%%%n", successRate);
-        System.out.println();
-
-        // Overall Performance
-        System.out.println(" OVERALL PERFORMANCE:");
-        System.out.printf("   Total Duration:     %.2fs%n", durationSeconds);
-        System.out.printf("   Overall Throughput: %.0f msg/sec%n", throughput);
+        System.out.printf("Number of successful messages sent: %d%n", totalReceived);
+        System.out.printf("Number of failed messages: %d%n", totalFailed);
+        System.out.printf("Total runtime (wall time): %.2f seconds%n", durationSeconds);
+        System.out.printf("Overall throughput: %.0f messages/second%n", throughput);
+        System.out.printf("Success rate: %.1f%%%n", successRate);
+        System.out.printf("Warmup websocket connections: %d total connections, %d reconnections%n", warmupConnections, warmupReconnections);
+        System.out.printf("Main phase websocket connections: %d total connections, %d reconnections%n",
+            mainPhaseConnections, mainPhaseReconnections);
 
         System.out.println("=================================================================");
         System.out.println();

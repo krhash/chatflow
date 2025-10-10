@@ -5,6 +5,7 @@ import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.queues.MessageQueue;
 import cs6650.chatflow.client.util.MessageTimer;
+import cs6650.chatflow.client.websocket.ChatflowWebSocketClient;
 import cs6650.chatflow.client.websocket.WebSocketConnectionPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,7 +84,7 @@ public class MainPhaseMessageConsumer implements Runnable {
         for (int attempt = 1; attempt <= Constants.MESSAGE_RETRY_ATTEMPTS; attempt++) {
             try {
                 // Get connection from pool
-                org.java_websocket.client.WebSocketClient connection = connectionPool.getNextConnection();
+                ChatflowWebSocketClient connection = connectionPool.getNextConnection();
 
                 // Check if connection is open
                 if (!connection.isOpen()) {
