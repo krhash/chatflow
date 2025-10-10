@@ -48,7 +48,7 @@ public class Constants {
     public static final int WARMUP_TOTAL_MESSAGES = WARMUP_THREADS * MESSAGES_PER_THREAD;
 
     // Main phase configuration
-    public static final int MAIN_PHASE_CONNECTION_POOL_SIZE = 8;
+    public static final int MAIN_PHASE_CONNECTION_POOL_SIZE = 20;
     public static final int MAIN_PHASE_CONSUMER_THREADS = 8;
     public static final int RESPONSE_THREAD_POOL_SIZE = 8;
     public static final int RETRY_WORKER_THREADS = 4;

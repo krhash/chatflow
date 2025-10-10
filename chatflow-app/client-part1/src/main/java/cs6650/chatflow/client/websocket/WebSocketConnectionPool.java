@@ -7,25 +7,26 @@ import com.google.gson.Gson;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Pool of reusable WebSocket connections for load distribution.
- * Manages connection lifecycle and provides round-robin load balancing.
- * Handles automatic reconnection on connection failures.
+ * Pool of reusable WebSocket connections mapped by room ID.
+ * Each connection is associated with a specific room ID (1-8).
+ * Manages connection lifecycle and handles automatic reconnection on failures.
  */
 public class WebSocketConnectionPool {
 
-    private final ChatflowWebSocketClient[] connections;
-    private final AtomicInteger nextConnectionIndex = new AtomicInteger(0);
+    private final Map<Integer, ChatflowWebSocketClient> connections;
     private final AtomicInteger reconnections;
     private final ResponseQueue responseQueue;
     private final String baseUri;
 
 
     /**
-     * Creates a connection pool with configured number of connections.
-     * Each connection uses a randomly generated room ID for load distribution.
+     * Creates a connection pool with sequential room IDs.
+     * Creates connections for room IDs 1 through MAIN_PHASE_CONNECTION_POOL_SIZE.
      * @param baseUri base server URI (e.g., ws://server:port/chat)
      * @param responseQueue queue for response processing
      * @param reconnections counter for tracking reconnection attempts
@@ -36,40 +37,50 @@ public class WebSocketConnectionPool {
         this.baseUri = baseUri;
         this.responseQueue = responseQueue;
         this.reconnections = reconnections;
-        this.connections = new ChatflowWebSocketClient[Constants.MAIN_PHASE_CONNECTION_POOL_SIZE];
+        this.connections = new ConcurrentHashMap<>();
 
-        // Initialize all connections with response queue callback
-        for (int i = 0; i < connections.length; i++) {
-            // Generate random room ID for each connection
-            int roomId = (int) (Math.random() * Constants.ROOM_COUNT) + 1;
+        // Initialize connections with sequential room IDs (1, 2, 3, ..., poolSize)
+        for (int roomId = 1; roomId <= Constants.MAIN_PHASE_CONNECTION_POOL_SIZE; roomId++) {
             URI serverUri = new URI(String.format("%s/room%d", baseUri, roomId));
-            connections[i] = new ChatflowWebSocketClient(serverUri, response -> {
+            ChatflowWebSocketClient connection = new ChatflowWebSocketClient(serverUri, response -> {
                 // Queue response for asynchronous processing
                 responseQueue.offer(response);
             });
-            connections[i].connectBlocking();
+            connection.connectBlocking();
+            connections.put(roomId, connection);
         }
+    }
+
+    /**
+     * Gets a connection by room ID.
+     * @param roomId room ID (1 to MAIN_PHASE_CONNECTION_POOL_SIZE)
+     * @return WebSocket client for the specified room
+     */
+    public ChatflowWebSocketClient getConnectionByRoomId(int roomId) {
+        return connections.get(roomId);
     }
 
     /**
      * Gets the next available connection using round-robin distribution.
      * @return WebSocket client for sending messages
+     * @deprecated Use getConnectionByRoomId(int) for room-specific routing
      */
+    @Deprecated
     public ChatflowWebSocketClient getNextConnection() {
-        int index = nextConnectionIndex.getAndIncrement() % connections.length;
-        return connections[index];
+        // For backward compatibility, return first available connection
+        return connections.values().iterator().next();
     }
 
     /**
      * Gets a specific connection by index.
      * @param index connection index (0 to pool size - 1)
      * @return WebSocket client at specified index
+     * @deprecated Use getConnectionByRoomId(int) instead
      */
+    @Deprecated
     public ChatflowWebSocketClient getConnection(int index) {
-        if (index < 0 || index >= connections.length) {
-            throw new IllegalArgumentException("Invalid connection index: " + index);
-        }
-        return connections[index];
+        // For backward compatibility, map index to roomId (index + 1)
+        return connections.get(index + 1);
     }
 
     /**
@@ -77,7 +88,7 @@ public class WebSocketConnectionPool {
      * @return pool size
      */
     public int getPoolSize() {
-        return connections.length;
+        return connections.size();
     }
 
     /**
@@ -85,7 +96,7 @@ public class WebSocketConnectionPool {
      * @return true if all connections are healthy
      */
     public boolean areAllConnectionsOpen() {
-        for (ChatflowWebSocketClient connection : connections) {
+        for (ChatflowWebSocketClient connection : connections.values()) {
             if (!connection.isOpen()) {
                 return false;
             }
@@ -99,7 +110,7 @@ public class WebSocketConnectionPool {
      */
     public int getOpenConnectionCount() {
         int count = 0;
-        for (ChatflowWebSocketClient connection : connections) {
+        for (ChatflowWebSocketClient connection : connections.values()) {
             if (connection.isOpen()) {
                 count++;
             }
@@ -131,7 +142,7 @@ public class WebSocketConnectionPool {
      * Closes all connections in the pool.
      */
     public void closeAll() {
-        for (ChatflowWebSocketClient connection : connections) {
+        for (ChatflowWebSocketClient connection : connections.values()) {
             if (connection != null) {
                 connection.close(1000, "main phase complete");
             }
@@ -144,24 +155,24 @@ public class WebSocketConnectionPool {
      * @return true if reconnection was successful
      */
     public boolean reconnect(ChatflowWebSocketClient connection) {
-        // Find the connection index
-        int connectionIndex = -1;
-        for (int i = 0; i < connections.length; i++) {
-            if (connections[i] == connection) {
-                connectionIndex = i;
+        connection.reconnectBlocking();
+        // Find the room ID for this connection
+        Integer roomId = null;
+        for (Map.Entry<Integer, ChatflowWebSocketClient> entry : connections.entrySet()) {
+            if (entry.getValue() == connection) {
+                roomId = entry.getKey();
                 break;
             }
         }
 
-        if (connectionIndex == -1) {
+        if (roomId == null) {
             return false; // Connection not found in pool
         }
 
         // Try reconnection with retries
         for (int attempt = 1; attempt <= Constants.CONNECTION_RECONNECT_ATTEMPTS; attempt++) {
             try {
-                // Generate new random room ID for reconnection
-                int roomId = (int) (Math.random() * Constants.ROOM_COUNT) + 1;
+                // Use the same room ID for reconnection (don't change room assignment)
                 URI serverUri = new URI(String.format("%s/room%d", baseUri, roomId));
 
                 // Create new connection
@@ -174,7 +185,7 @@ public class WebSocketConnectionPool {
                 newConnection.connectBlocking();
 
                 // Replace the old connection
-                connections[connectionIndex] = newConnection;
+                connections.put(roomId, newConnection);
 
                 // Increment reconnection counter
                 reconnections.incrementAndGet();

@@ -2,7 +2,7 @@ package cs6650.chatflow.client.workers;
 
 import com.google.gson.Gson;
 import cs6650.chatflow.client.commons.Constants;
-import cs6650.chatflow.client.model.ChatMessage;
+import cs6650.chatflow.client.model.MessageQueueEntry;
 import cs6650.chatflow.client.queues.MessageQueue;
 import cs6650.chatflow.client.util.MessageTimer;
 import cs6650.chatflow.client.websocket.ChatflowWebSocketClient;
@@ -13,7 +13,8 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Consumer thread that takes messages from queue and sends them via WebSocket connection pool.
+ * Consumer thread that takes message entries from queue and sends them via WebSocket connection pool.
+ * Routes messages to the correct connection based on room ID.
  * Implements retry logic and tracks message send timestamps.
  */
 public class MainPhaseMessageConsumer implements Runnable {
@@ -28,7 +29,7 @@ public class MainPhaseMessageConsumer implements Runnable {
 
     /**
      * Creates message consumer.
-     * @param messageQueue queue to consume messages from
+     * @param messageQueue queue to consume message entries from
      * @param connectionPool WebSocket connection pool
      * @param messageTimer timer for tracking message timeouts
      * @param messagesSent global counter for sent messages
@@ -55,12 +56,12 @@ public class MainPhaseMessageConsumer implements Runnable {
                     break;
                 }
 
-                // Try to get next message with timeout to avoid indefinite blocking
-                ChatMessage message = messageQueue.poll(1000); // Wait up to 1 second
+                // Try to get next message entry with timeout to avoid indefinite blocking
+                MessageQueueEntry entry = messageQueue.poll(1000); // Wait up to 1 second
 
-                if (message != null) {
+                if (entry != null) {
                     // Send message with retry logic
-                    sendMessageWithRetry(message);
+                    sendMessageWithRetry(entry);
                 }
             }
 
@@ -74,35 +75,43 @@ public class MainPhaseMessageConsumer implements Runnable {
 
     /**
      * Sends a message with retry logic.
-     * @param message message to send
+     * @param entry message entry containing message and target room ID
      */
-    private void sendMessageWithRetry(ChatMessage message) {
-        String messageJson = gson.toJson(message);
+    private void sendMessageWithRetry(MessageQueueEntry entry) {
+        String messageJson = gson.toJson(entry.getMessage());
         long delay = Constants.MESSAGE_RETRY_INITIAL_DELAY_MILLIS;
 
         for (int attempt = 1; attempt <= Constants.MESSAGE_RETRY_ATTEMPTS; attempt++) {
             try {
-                // Get connection from pool
-                ChatflowWebSocketClient connection = connectionPool.getNextConnection();
+                // Get connection for the specific room ID
+                ChatflowWebSocketClient connection = connectionPool.getConnectionByRoomId(entry.getRoomId());
+
+                if (connection == null) {
+                    logger.error("No connection available for room ID {} for message {}, skipping",
+                        entry.getRoomId(), entry.getMessage().getMessageId());
+                    return;
+                }
 
                 // Check if connection is open
                 if (!connection.isOpen()) {
                     // Try to reconnect the failed connection
                     if (connectionPool.reconnect(connection)) {
                         // Get the new connection (reconnect replaced it in the pool)
-                        connection = connectionPool.getNextConnection();
-                        if (!connection.isOpen()) {
-                            logger.warn("Connection still closed after reconnection attempt for message {}, skipping", message.getMessageId());
+                        connection = connectionPool.getConnectionByRoomId(entry.getRoomId());
+                        if (connection == null || !connection.isOpen()) {
+                            logger.warn("Connection still unavailable after reconnection attempt for room {} message {}, skipping",
+                                entry.getRoomId(), entry.getMessage().getMessageId());
                             return;
                         }
                     } else {
-                        logger.warn("Failed to reconnect connection for message {}, skipping", message.getMessageId());
+                        logger.warn("Failed to reconnect connection for room {} message {}, skipping",
+                            entry.getRoomId(), entry.getMessage().getMessageId());
                         return;
                     }
                 }
 
                 // Record send timestamp for timeout tracking
-                messageTimer.recordMessageSent(message);
+                messageTimer.recordMessageSent(entry.getMessage());
 
                 // Send message
                 connection.send(messageJson);
@@ -117,7 +126,7 @@ public class MainPhaseMessageConsumer implements Runnable {
                 if (attempt == Constants.MESSAGE_RETRY_ATTEMPTS) {
                     // All retries exhausted
                     logger.error("Failed to send message {} after {} attempts: {}",
-                        message.getMessageId(), Constants.MESSAGE_RETRY_ATTEMPTS, e.getMessage());
+                        entry.getMessage().getMessageId(), Constants.MESSAGE_RETRY_ATTEMPTS, e.getMessage());
                     return;
                 }
 

@@ -1,14 +1,14 @@
 package cs6650.chatflow.client.workers;
 
 import cs6650.chatflow.client.commons.Constants;
-import cs6650.chatflow.client.model.ChatMessage;
+import cs6650.chatflow.client.model.MessageQueueEntry;
 import cs6650.chatflow.client.util.MessageGenerator;
 import cs6650.chatflow.client.queues.MessageQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Producer thread that generates messages and puts them in the queue.
+ * Producer thread that generates message entries with random room IDs and puts them in the queue.
  * Runs continuously until all messages are generated.
  */
 public class MainPhaseMessageProducer implements Runnable {
@@ -19,7 +19,7 @@ public class MainPhaseMessageProducer implements Runnable {
 
     /**
      * Creates message producer.
-     * @param messageQueue queue to put generated messages
+     * @param messageQueue queue to put generated message entries
      * @param totalMessages total number of messages to generate
      */
     public MainPhaseMessageProducer(MessageQueue messageQueue, int totalMessages) {
@@ -33,8 +33,8 @@ public class MainPhaseMessageProducer implements Runnable {
             logger.info("Starting message generation...");
 
             for (int i = 0; i < totalMessages; i++) {
-                ChatMessage message = MessageGenerator.generateRandomMessage();
-                messageQueue.put(message);
+                MessageQueueEntry entry = MessageGenerator.generateRandomMessageEntry();
+                messageQueue.put(entry);
 
                 // Progress reporting - debug level to reduce verbosity
                 if ((i + 1) % Constants.PROGRESS_REPORT_INTERVAL == 0) {
