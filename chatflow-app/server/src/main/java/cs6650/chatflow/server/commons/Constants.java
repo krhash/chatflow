@@ -5,7 +5,7 @@ package cs6650.chatflow.server.commons;
  * Includes endpoint paths, message types, validation regex, and validation limits.
  * All validation defaults are centralized here for easy maintenance and refactoring.
  */
-public final class ChatConstants {
+public final class Constants {
 
     // ========== ENDPOINT PATHS ==========
     /** Health check REST endpoint path */
@@ -68,10 +68,13 @@ public final class ChatConstants {
     /** Success status for server responses */
     public static final String STATUS_OK = "OK";
 
+    // Heartbeat configuration
+    public static final int HEARTBEAT_INTERVAL_SECONDS = 30; // Send ping every 30 seconds
+
     /** Error status for server responses */
     public static final String STATUS_ERROR = "ERROR";
 
-    private ChatConstants() {
+    private Constants() {
         throw new AssertionError("This class cannot be instantiated.");
     }
 }

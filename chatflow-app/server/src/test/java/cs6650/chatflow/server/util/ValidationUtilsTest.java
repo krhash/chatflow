@@ -1,7 +1,7 @@
 package cs6650.chatflow.server.util;
 
 import cs6650.chatflow.server.model.ChatCommand;
-import cs6650.chatflow.server.commons.ChatConstants;
+import cs6650.chatflow.server.commons.Constants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
@@ -72,7 +72,7 @@ class ValidationUtilsTest {
     void testInvalidUserIdFormats(String userId) {
         validCommand.setUserId(userId);
         String result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_USER_ID, result);
+        assertEquals(Constants.ERROR_INVALID_USER_ID, result);
     }
 
     // ========== USERNAME VALIDATION TESTS ==========
@@ -97,7 +97,7 @@ class ValidationUtilsTest {
     void testUsernameTooShort(String username) {
         validCommand.setUsername(username);
         String result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_USERNAME, result);
+        assertEquals(Constants.ERROR_INVALID_USERNAME, result);
     }
 
     @ParameterizedTest
@@ -109,7 +109,7 @@ class ValidationUtilsTest {
     void testUsernameTooLong(String username) {
         validCommand.setUsername(username);
         String result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_USERNAME, result);
+        assertEquals(Constants.ERROR_INVALID_USERNAME, result);
     }
 
     @Test
@@ -134,7 +134,7 @@ class ValidationUtilsTest {
     void testUsernameInvalidCharacters(String username) {
         validCommand.setUsername(username);
         String result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_USERNAME, result);
+        assertEquals(Constants.ERROR_INVALID_USERNAME, result);
     }
 
     // ========== MESSAGE VALIDATION TESTS ==========
@@ -161,11 +161,11 @@ class ValidationUtilsTest {
     void testEmptyMessage() {
         validCommand.setMessage("");
         String result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_MESSAGE_LENGTH, result);
+        assertEquals(Constants.ERROR_INVALID_MESSAGE_LENGTH, result);
 
         validCommand.setMessage(null);
         result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_MESSAGE_LENGTH, result);
+        assertEquals(Constants.ERROR_INVALID_MESSAGE_LENGTH, result);
     }
 
     @Test
@@ -174,7 +174,7 @@ class ValidationUtilsTest {
         String tooLongMessage = "a".repeat(501); // 501 characters
         validCommand.setMessage(tooLongMessage);
         String result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_MESSAGE_LENGTH, result);
+        assertEquals(Constants.ERROR_INVALID_MESSAGE_LENGTH, result);
     }
 
     // ========== TIMESTAMP VALIDATION TESTS ==========
@@ -219,7 +219,7 @@ class ValidationUtilsTest {
     void testInvalidTimestamps(String timestamp) {
         validCommand.setTimestamp(timestamp);
         String result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_TIMESTAMP, result);
+        assertEquals(Constants.ERROR_INVALID_TIMESTAMP, result);
     }
 
     // ========== MESSAGE TYPE VALIDATION TESTS ==========
@@ -258,7 +258,7 @@ class ValidationUtilsTest {
     void testInvalidMessageTypes(String messageType) {
         validCommand.setMessageType(messageType);
         String result = ValidationUtils.validate(validCommand);
-        assertEquals(ChatConstants.ERROR_INVALID_MESSAGE_TYPE, result);
+        assertEquals(Constants.ERROR_INVALID_MESSAGE_TYPE, result);
     }
 
     // ========== EDGE CASES AND BOUNDARY TESTS ==========
@@ -331,10 +331,10 @@ class ValidationUtilsTest {
 
         // Test just outside boundaries
         validCommand.setUserId("0");
-        assertEquals(ChatConstants.ERROR_USER_ID_OUT_OF_RANGE, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_USER_ID_OUT_OF_RANGE, ValidationUtils.validate(validCommand));
 
         validCommand.setUserId("100001");
-        assertEquals(ChatConstants.ERROR_USER_ID_OUT_OF_RANGE, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_USER_ID_OUT_OF_RANGE, ValidationUtils.validate(validCommand));
     }
 
     @Test
@@ -350,10 +350,10 @@ class ValidationUtilsTest {
 
         // Test alphanumeric only (no underscores, hyphens, etc.)
         validCommand.setUsername("user_name");
-        assertEquals(ChatConstants.ERROR_INVALID_USERNAME, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_INVALID_USERNAME, ValidationUtils.validate(validCommand));
 
         validCommand.setUsername("test-user");
-        assertEquals(ChatConstants.ERROR_INVALID_USERNAME, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_INVALID_USERNAME, ValidationUtils.validate(validCommand));
     }
 
     @Test
@@ -371,7 +371,7 @@ class ValidationUtilsTest {
         // Test just over limit
         String tooLongMessage = "a".repeat(501);
         validCommand.setMessage(tooLongMessage);
-        assertEquals(ChatConstants.ERROR_INVALID_MESSAGE_LENGTH, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_INVALID_MESSAGE_LENGTH, ValidationUtils.validate(validCommand));
     }
 
     @Test
@@ -387,10 +387,10 @@ class ValidationUtilsTest {
 
         // Test invalid types
         validCommand.setMessageType("CHAT");
-        assertEquals(ChatConstants.ERROR_INVALID_MESSAGE_TYPE, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_INVALID_MESSAGE_TYPE, ValidationUtils.validate(validCommand));
 
         validCommand.setMessageType("text");
-        assertEquals(ChatConstants.ERROR_INVALID_MESSAGE_TYPE, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_INVALID_MESSAGE_TYPE, ValidationUtils.validate(validCommand));
     }
 
     @Test
@@ -411,9 +411,9 @@ class ValidationUtilsTest {
 
         // Test invalid formats
         validCommand.setTimestamp("2023-12-01 12:00:00");
-        assertEquals(ChatConstants.ERROR_INVALID_TIMESTAMP, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_INVALID_TIMESTAMP, ValidationUtils.validate(validCommand));
 
         validCommand.setTimestamp("not-a-timestamp");
-        assertEquals(ChatConstants.ERROR_INVALID_TIMESTAMP, ValidationUtils.validate(validCommand));
+        assertEquals(Constants.ERROR_INVALID_TIMESTAMP, ValidationUtils.validate(validCommand));
     }
 }

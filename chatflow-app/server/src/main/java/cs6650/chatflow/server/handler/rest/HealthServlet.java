@@ -4,7 +4,7 @@ import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
 import java.io.IOException;
 
-import static cs6650.chatflow.server.commons.ChatConstants.HEALTH_ENDPOINT;
+import static cs6650.chatflow.server.commons.Constants.HEALTH_ENDPOINT;
 
 /**
  * Health check servlet responding with a simple JSON status message.

@@ -1,7 +1,7 @@
 package cs6650.chatflow.server.util;
 
 import cs6650.chatflow.server.model.ChatCommand;
-import cs6650.chatflow.server.commons.ChatConstants;
+import cs6650.chatflow.server.commons.Constants;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
 public final class ValidationUtils {
 
     /** Compiled pattern for username validation - cached for performance */
-    private static final Pattern USERNAME_PATTERN = Pattern.compile(ChatConstants.USERNAME_REGEX);
+    private static final Pattern USERNAME_PATTERN = Pattern.compile(Constants.USERNAME_REGEX);
 
     /**
      * Validates the fields of a ChatCommand.
@@ -69,17 +69,17 @@ public final class ValidationUtils {
      */
     public static String validateUserId(String userId) {
         if (userId == null || userId.trim().isEmpty()) {
-            return ChatConstants.ERROR_INVALID_USER_ID;
+            return Constants.ERROR_INVALID_USER_ID;
         }
 
         try {
             int userIdInt = Integer.parseInt(userId.trim());
 
-            if (userIdInt < ChatConstants.USER_ID_MIN || userIdInt > ChatConstants.USER_ID_MAX) {
-                return ChatConstants.ERROR_USER_ID_OUT_OF_RANGE;
+            if (userIdInt < Constants.USER_ID_MIN || userIdInt > Constants.USER_ID_MAX) {
+                return Constants.ERROR_USER_ID_OUT_OF_RANGE;
             }
         } catch (NumberFormatException ex) {
-            return ChatConstants.ERROR_INVALID_USER_ID;
+            return Constants.ERROR_INVALID_USER_ID;
         }
 
         return null;
@@ -93,12 +93,12 @@ public final class ValidationUtils {
      */
     public static String validateUsername(String username) {
         if (username == null) {
-            return ChatConstants.ERROR_INVALID_USERNAME;
+            return Constants.ERROR_INVALID_USERNAME;
         }
 
         // Use pre-compiled pattern - regex handles both length and character validation
         if (!USERNAME_PATTERN.matcher(username).matches()) {
-            return ChatConstants.ERROR_INVALID_USERNAME;
+            return Constants.ERROR_INVALID_USERNAME;
         }
 
         return null;
@@ -111,11 +111,11 @@ public final class ValidationUtils {
      */
     public static String validateMessage(String message) {
         if (message == null) {
-            return ChatConstants.ERROR_INVALID_MESSAGE_LENGTH;
+            return Constants.ERROR_INVALID_MESSAGE_LENGTH;
         }
 
-        if (message.length() < ChatConstants.MESSAGE_LENGTH_MIN || message.length() > ChatConstants.MESSAGE_LENGTH_MAX) {
-            return ChatConstants.ERROR_INVALID_MESSAGE_LENGTH;
+        if (message.length() < Constants.MESSAGE_LENGTH_MIN || message.length() > Constants.MESSAGE_LENGTH_MAX) {
+            return Constants.ERROR_INVALID_MESSAGE_LENGTH;
         }
 
         return null;
@@ -129,7 +129,7 @@ public final class ValidationUtils {
      */
     public static String validateTimestamp(String timestamp) {
         if (timestamp == null || timestamp.trim().isEmpty()) {
-            return ChatConstants.ERROR_INVALID_TIMESTAMP;
+            return Constants.ERROR_INVALID_TIMESTAMP;
         }
 
         // Try parsing as Instant first (for Z-suffixed timestamps)
@@ -143,7 +143,7 @@ public final class ValidationUtils {
                 return null;
             } catch (DateTimeParseException ex2) {
                 // Both parsing methods failed - invalid format
-                return ChatConstants.ERROR_INVALID_TIMESTAMP;
+                return Constants.ERROR_INVALID_TIMESTAMP;
             }
         }
     }
@@ -173,17 +173,17 @@ public final class ValidationUtils {
      */
     public static String validateMessageType(String messageType) {
         if (messageType == null || messageType.trim().isEmpty()) {
-            return ChatConstants.ERROR_INVALID_MESSAGE_TYPE;
+            return Constants.ERROR_INVALID_MESSAGE_TYPE;
         }
 
         // Check against allowed message types
-        for (String allowed : ChatConstants.MESSAGE_TYPES) {
+        for (String allowed : Constants.MESSAGE_TYPES) {
             if (allowed.equals(messageType.trim())) {
                 return null;
             }
         }
 
-        return ChatConstants.ERROR_INVALID_MESSAGE_TYPE;
+        return Constants.ERROR_INVALID_MESSAGE_TYPE;
     }
 
     private ValidationUtils() {
