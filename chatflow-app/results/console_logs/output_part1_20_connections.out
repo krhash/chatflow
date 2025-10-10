@@ -1,0 +1,108 @@
+[main] INFO cs6650.chatflow.client.Main - WebSocket base URI: ws://18.208.221.105:8080/chatflow-server
+
+=================================================================
+                     ChatFlow Client
+[main] INFO cs6650.chatflow.client.Main - Starting Warmup Phase ...
+                  WebSocket Performance Test
+=================================================================
+
+[main] INFO cs6650.chatflow.client.coordinator.WarmupPhaseExecutor - Starting warmup phase with 32 threads
+[main] INFO cs6650.chatflow.client.coordinator.WarmupPhaseExecutor - Initializing warmup threads...
+[main] INFO cs6650.chatflow.client.coordinator.WarmupPhaseExecutor - Waiting for all warmup threads to complete sending...
+[main] INFO cs6650.chatflow.client.coordinator.WarmupPhaseExecutor - Waiting for all warmup responses...
+
+=================================================================
+                     Warmup Phase Results
+-----------------------------------------------------------------
+ CONFIGURATION:
+   Threads:           32
+   Messages/Thread:   1000
+   Expected Messages: 32000
+   Room Count:        20
+
+ RESULTS:
+   Messages Sent:     32000
+   Messages Received: 32000
+   Success Rate:      100.0%
+
+ PERFORMANCE:
+   Send Duration:     1.67s
+   Total Duration:    1.89s
+   Send Throughput:   19196 msg/sec
+   Overall Throughput: 16931 msg/sec
+=================================================================
+
+[main] INFO cs6650.chatflow.client.Main - Starting Main Phase ...
+
+=================================================================
+                     ChatFlow Main Phase
+              High-Throughput Load Testing
+=================================================================
+
+Connected to server: ws://18.208.221.105:8080/chatflow-server
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Initializing main phase components...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Components initialized successfully
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Starting main phase threads...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Starting message producer thread...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Started message producer thread
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Starting 8 message consumer threads...
+[MessageProducer] INFO cs6650.chatflow.client.workers.MainPhaseMessageProducer - Starting message generation...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Started 8 message consumer threads
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Starting 8 response processor threads...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Started 8 response processor threads
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Starting timeout monitor thread...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Started timeout monitor thread
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Starting 4 retry worker threads...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Started 4 retry worker threads
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - All main phase threads started successfully
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Waiting for message generation and processing to complete...
+[MessageProducer] INFO cs6650.chatflow.client.workers.MainPhaseMessageProducer - Completed message generation
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - All messages sent. Waiting for all responses...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - All 468000 messages have received responses - test complete
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Main processing complete
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - Checking dead letter queue status...
+[main] INFO cs6650.chatflow.client.coordinator.MainPhaseExecutor - No pending messages found in dead letter queue
+
+=================================================================
+                     Main Phase Results
+-----------------------------------------------------------------
+ CONFIGURATION:
+   Target Messages:     468000
+   Producer Threads:    1
+   Consumer Threads:    8
+   Response Threads:    8
+   Retry Workers:       4
+   Timeout Monitor:     1
+   Connection Pool:     20
+   Message Queue:       5000
+   Response Queue:      2000
+   Dead Letter Queue:   1000
+   Message Timeout:     60 sec
+
+ Messages Sent:       468000
+ Messages Received:   468000
+ Failed Messages:     0
+ Success Rate:        100.0%
+
+ Duration:            12.96s
+ Throughput:          36114 msg/sec
+=================================================================
+
+Shutting down main phase components...
+[main] INFO cs6650.chatflow.client.Main - Main phase completed successfully
+Shutdown complete
+
+=================================================================
+                   ChatFlow Part 1 Test Complete
+=================================================================
+Server base URI: ws://18.208.221.105:8080/chatflow-server
+
+Warmup websocket connections: 32 total connections, 0 reconnections
+Main phase websocket connections: 20 total connections, 0 reconnections
+Number of successful messages sent: 500000
+Number of failed messages: 0
+Total runtime (wall time): 14.86 seconds
+Overall throughput: 33643 messages/second
+Success rate: 100.0%
+=================================================================
+
