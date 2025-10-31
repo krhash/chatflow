@@ -60,7 +60,7 @@ public class ChatWebSocketEndpoint {
         try {
             ChatCommand command = gson.fromJson(msgJson, ChatCommand.class);
 
-            logger.info("Received: {}", msgJson);
+            //logger.info("Received: {}", msgJson);
 
             String validationError = ValidationUtils.validate(command);
             if (validationError != null) {
@@ -74,7 +74,7 @@ public class ChatWebSocketEndpoint {
             MessagePublisher publisher = MessagePublisherManager.getInstance();
             publisher.publishMessage(command, roomId, session);
 
-            logger.info("Message published to queue for room {}: {}", roomId, command.getMessageId());
+            //logger.info("Message published to queue for room {}: {}", roomId, command.getMessageId());
 
         } catch (JsonSyntaxException e) {
             logger.error("Invalid JSON - session: {}, message: {}, error: {}", session.getId(), msgJson, e.getMessage());
