@@ -2,25 +2,31 @@ package cs6650.chatflow.consumer.util;
 
 import cs6650.chatflow.consumer.commons.Constants;
 import cs6650.chatflow.consumer.model.ChatEvent;
+import cs6650.chatflow.consumer.model.MessageAck;
 import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.websocket.Session;
 import java.io.IOException;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Manages WebSocket sessions for each room.
- * Handles adding/removing sessions and broadcasting messages to all sessions in a room.
+ * Enhanced room manager with user-based state tracking and guaranteed message delivery.
+ * Each room tracks users, their sessions, and message delivery states.
  */
 public class RoomManager {
     private static final Logger logger = LoggerFactory.getLogger(RoomManager.class);
     private static final Gson gson = new Gson();
 
-    // Room ID -> Set of active WebSocket sessions
-    private final ConcurrentHashMap<String, Set<Session>> roomSessions = new ConcurrentHashMap<>();
+    // Legacy: Room ID -> Set of active WebSocket sessions (for backward compatibility)
+    private final Map<String, Set<Session>> roomSessions = new ConcurrentHashMap<>();
+
+    // Enhanced: Room ID -> RoomState (user tracking + message delivery)
+    private final Map<String, RoomState> roomStates = new ConcurrentHashMap<>();
 
     private static class SingletonHolder {
         private static final RoomManager INSTANCE = new RoomManager();
@@ -35,11 +41,23 @@ public class RoomManager {
     }
 
     /**
-     * Adds a WebSocket session to the specified room.
+     * Adds a WebSocket session to the specified room with user tracking.
+     * Expects userId in session properties.
      */
     public void addSession(Session session, String roomId) {
         roomSessions.computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet()).add(session);
-        logger.info("Added session {} to room {}", session.getId(), roomId);
+
+        // Enhanced user tracking
+        RoomState roomState = roomStates.computeIfAbsent(roomId, RoomState::new);
+        roomState.addSession(session);
+
+        String userId = (String) session.getUserProperties().get("userId");
+        if (userId != null) {
+            roomState.addUser(userId, session);
+            logger.info("Added user {} (session {}) to room {}", userId, session.getId(), roomId);
+        } else {
+            logger.warn("Session {} connected without userId to room {}", session.getId(), roomId);
+        }
     }
 
     /**
@@ -51,50 +69,163 @@ public class RoomManager {
             sessions.remove(session);
             if (sessions.isEmpty()) {
                 roomSessions.remove(roomId);
-                logger.info("Removed empty room {}", roomId);
             }
-            logger.info("Removed session {} from room {}", session.getId(), roomId);
+        }
+
+        // Enhanced cleanup
+        RoomState roomState = roomStates.get(roomId);
+        if (roomState != null) {
+            roomState.removeSession(session);
+
+            String userId = (String) session.getUserProperties().get("userId");
+            if (userId != null) {
+                roomState.removeUser(userId);
+                logger.debug("Removed user {} from room {}", userId, roomId);
+            }
+
+            // Clean up empty rooms
+            if (roomState.isEmpty()) {
+                roomStates.remove(roomId);
+                logger.info("Cleaned up empty room {}", roomId);
+            }
+        }
+
+        logger.info("Removed session {} from room {}", session.getId(), roomId);
+    }
+
+    /**
+     * Adds a user to a room's active user list when JOIN message is received.
+     * This is called when processing JOIN messages from the queue.
+     */
+    public void addUserToRoom(String userId, String roomId) {
+        if (userId == null) {
+            logger.warn("Cannot add null userId to room {}", roomId);
+            return;
+        }
+
+        RoomState roomState = roomStates.computeIfAbsent(roomId, RoomState::new);
+        if (!roomState.hasUser(userId)) {
+            // Add user without session initially (user identified via ACK messages)
+            User user = new User(userId, null); // No WebSocket session yet
+            roomState.addUser(userId, null);
+            logger.info("Added user {} to active users in room {}", userId, roomId);
         }
     }
 
     /**
-     * Broadcasts a ChatEvent to all sessions in the specified room.
-     * Returns true if message was successfully sent to at least one client.
+     * Removes a user from a room's active user list when LEAVE message is received.
      */
-    public boolean broadcastToRoom(ChatEvent event, String roomId) {
-        Set<Session> sessions = roomSessions.get(roomId);
-        if (sessions == null || sessions.isEmpty()) {
-            logger.debug("No active sessions in room {}", roomId);
-            return false; // No clients to receive the message
+    public void removeUserFromRoom(String userId, String roomId) {
+        if (userId == null) {
+            logger.warn("Cannot remove null userId from room {}", roomId);
+            return;
         }
 
-        String message = gson.toJson(event);
-        int broadcastCount = 0;
+        RoomState roomState = roomStates.get(roomId);
+        if (roomState != null) {
+            roomState.removeUser(userId);
+            logger.info("Removed user {} from active users in room {}", userId, roomId);
 
+            // Clean up empty rooms
+            if (roomState.isEmpty()) {
+                roomStates.remove(roomId);
+                logger.info("Cleaned up empty room {}", roomId);
+            }
+        }
+    }
+
+    /**
+     * Broadcasts a message to all active WebSocket sessions in the room.
+     * Returns true if at least one session received the message.
+     * For Option A: Immediate ACK - client acknowledgments become optional QoS.
+     */
+    public boolean broadcastToRoom(ChatEvent event, String roomId) {
+        RoomState roomState = roomStates.get(roomId);
+        if (roomState == null) {
+            logger.debug("No room state for room {}", roomId);
+            return false;
+        }
+
+        Set<Session> sessions = roomState.getActiveSessions();
+        if (sessions.isEmpty()) {
+            logger.debug("No active sessions in room {}", roomId);
+            return false; // No connected clients
+        }
+
+        String messageJson = gson.toJson(event);
+        int deliveredToSessions = 0;
+
+        // Broadcast to ALL connected WebSocket sessions in this room
         for (Session session : sessions) {
             try {
-                session.getBasicRemote().sendText(message);
-                broadcastCount++;
+                if (session.isOpen()) {
+                    session.getBasicRemote().sendText(messageJson);
+                    deliveredToSessions++;
+                } else {
+                    logger.debug("Skipping closed session {} in room {}", session.getId(), roomId);
+                }
             } catch (IOException e) {
-                logger.warn("Failed to send message to session {} in room {}: {}", session.getId(), roomId, e.getMessage());
-                // Remove closed session
-                sessions.remove(session);
+                logger.warn("Failed to send message {} to session in room {}: {}",
+                    event.getMessageId(), roomId, e.getMessage());
+            } catch (IllegalStateException e) {
+                if (e.getMessage().contains("closed")) {
+                    logger.debug("Session {} already closed in room {}, skipping", session.getId(), roomId);
+                } else {
+                    logger.warn("Illegal state when sending message {} to session {} in room {}: {}",
+                        event.getMessageId(), session.getId(), roomId, e.getMessage());
+                }
             }
         }
 
-        if (broadcastCount > 0) {
-            logger.debug("Broadcasted message {} to {} sessions in room {}", event.getMessageId(), broadcastCount, roomId);
-        }
+        logger.debug("Broadcasted message {} to {} sessions in room {}", event.getMessageId(), deliveredToSessions, roomId);
 
-        // Clean up empty rooms
-        if (sessions.isEmpty()) {
-            roomSessions.remove(roomId);
-            logger.info("Cleaned up empty room {}", roomId);
-        }
-
-        // Return true only if we successfully sent to at least one client
-        return broadcastCount > 0;
+        // For TEXT messages, client acknowledgments are now optional QoS
+        // RabbitMQ ACK happens immediately in the consumer after broadcast attempt
+        return deliveredToSessions > 0;
     }
+
+    /**
+     * Processes a client acknowledgment.
+     */
+    public boolean processAcknowledgment(MessageAck ack) {
+        RoomState roomState = roomStates.get(ack.getRoomId());
+        if (roomState == null) {
+            logger.warn("Received ack for unknown room {}", ack.getRoomId());
+            return false;
+        }
+
+        // Verify this user can acknowledge this message
+        if (!roomState.canAcknowledgeMessage(ack.getMessageId(), ack.getUserId())) {
+            logger.warn("User {} cannot acknowledge message {} in room {} (not in active user list)",
+                ack.getUserId(), ack.getMessageId(), ack.getRoomId());
+            return false;
+        }
+
+        // Mark as acknowledged
+        roomState.markMessageAcknowledged(ack.getMessageId(), ack.getUserId());
+
+        MessageDeliveryState deliveryState = roomState.getDeliveryState(ack.getMessageId());
+        if (deliveryState != null) {
+            logger.debug("User {} acknowledged message {} in room {}, pending acks: {}",
+                ack.getUserId(), ack.getMessageId(), ack.getRoomId(), deliveryState.getPendingAcknowledgements());
+
+            if (deliveryState.isFullyAcknowledged()) {
+                logger.info("Message {} fully acknowledged in room {} and can be removed from queue", ack.getMessageId(), ack.getRoomId());
+                return true; // Signal that message can be acknowledged to RabbitMQ
+            }
+        }
+
+        return false; // Message not yet fully acknowledged
+    }
+
+    /**
+     * Checks if a message can be acknowledged (fully delivered to all active users).
+     */
+    public boolean canAcknowledgeMessage(String messageId, String roomId) {
+        RoomState roomState = roomStates.get(roomId);
+        return roomState != null && roomState.canMessageBeAcknowledged(messageId);
+    }
+
 
     /**
      * Gets the number of sessions in a room.

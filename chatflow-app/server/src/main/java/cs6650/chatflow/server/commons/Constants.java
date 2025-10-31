@@ -19,7 +19,7 @@ public final class Constants {
 
     // ========== MESSAGE TYPES (using enum for type safety) ==========
     /** Allowed message types for chat commands - kept as array for JSON compatibility */
-    public static final String[] MESSAGE_TYPES = {"TEXT", "JOIN", "LEAVE"};
+    public static final String[] MESSAGE_TYPES = {"TEXT", "JOIN", "LEAVE", "ACK"};
 
     // ========== VALIDATION REGEX PATTERNS ==========
     /** Username validation regex pattern (3-20 alphanumeric characters only, no underscores) */

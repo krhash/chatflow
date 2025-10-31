@@ -2,6 +2,7 @@ package cs6650.chatflow.consumer.messaging;
 
 import cs6650.chatflow.consumer.model.ChatEvent;
 import cs6650.chatflow.consumer.util.RoomManager;
+import cs6650.chatflow.consumer.messaging.MessageConsumerManager;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import com.rabbitmq.client.*;
@@ -57,17 +58,75 @@ public class RoomMessageConsumer {
                         return;
                     }
 
-                    // Broadcast to WebSocket clients
-                    boolean broadcastSuccessful = roomManager.broadcastToRoom(event, roomId);
-
-                    if (broadcastSuccessful) {
-                        // Acknowledge the message only after successful broadcast
+                    // Handle different message types
+                    String messageType = event.getMessageType();
+                    if ("JOIN".equals(messageType)) {
+                        // Handle JOIN message - add user to room
+                        roomManager.addUserToRoom(event.getUserId(), roomId);
+                        logger.info("User {} joined room {}", event.getUserId(), roomId);
+                        // Broadcast JOIN to all WebSocket clients but acknowledge immediately since it doesn't need per-user ACK
+                        roomManager.broadcastToRoom(event, roomId);
                         channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
-                        logger.debug("Acknowledged message {} for room {}", event.getMessageId(), roomId);
+                        return;
+
+                    } else if ("LEAVE".equals(messageType)) {
+                        // Handle LEAVE message - remove user from room
+                        roomManager.removeUserFromRoom(event.getUserId(), roomId);
+                        logger.info("User {} left room {}", event.getUserId(), roomId);
+                        // Broadcast LEAVE but acknowledge immediately
+                        roomManager.broadcastToRoom(event, roomId);
+                        channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+                        return;
+
+                    } else if ("ACK".equals(messageType)) {
+                        // Handle ACK messages - broadcast to all WebSocket clients for confirmation
+                        try {
+                            boolean broadcastSuccessful = roomManager.broadcastToRoom(event, roomId);
+
+                            // Always acknowledge ACK messages to RabbitMQ immediately after broadcast
+                            channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+
+                            if (broadcastSuccessful) {
+                                logger.debug("ACK message {} broadcast successfully to room {}", event.getMessageId(), roomId);
+                            } else {
+                                logger.debug("ACK message {} ack'ed to RabbitMQ but no connected clients in room {}", event.getMessageId(), roomId);
+                            }
+                        } catch (Exception broadcastError) {
+                            logger.error("Failed to broadcast ACK message {} in room {}: {}", event.getMessageId(), roomId, broadcastError.getMessage());
+                            // Still acknowledge to RabbitMQ to avoid infinite retries
+                            try {
+                                channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+                                logger.debug("Acknowledged ACK message after broadcast error in room {}", roomId);
+                            } catch (IOException ackEx) {
+                                logger.error("Failed to acknowledge ACK message after broadcast error in room {}: {}", roomId, ackEx.getMessage());
+                            }
+                        }
                     } else {
-                        // Do not acknowledge - message stays in queue for redelivery
-                        // when clients are connected
-                        logger.warn("Message {} not broadcast to room {} (no connected clients), message stays in queue", event.getMessageId(), roomId);
+                        // Handle regular messages (TEXT) - ACK immediately after broadcast attempt
+                        // Client acknowledgments are optional "best effort" QoS, not blocking operations
+                        try {
+                            boolean broadcastSuccessful = roomManager.broadcastToRoom(event, roomId);
+
+                            // Always acknowledge TEXT messages to RabbitMQ immediately after broadcast
+                            channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+
+                            if (broadcastSuccessful) {
+                                logger.debug("Message {} broadcast successfully to room {} and acknowledged to RabbitMQ", event.getMessageId(), roomId);
+                            } else {
+                                // Message was ack'ed to RabbitMQ but no connected clients received it
+                                // Client side retry logic can handle redelivery later
+                                logger.warn("Message {} ack'ed to RabbitMQ but no connected clients in room {}", event.getMessageId(), roomId);
+                            }
+                        } catch (Exception broadcastError) {
+                            logger.error("Failed to broadcast message {} in room {}: {}", event.getMessageId(), roomId, broadcastError.getMessage());
+                            // Still acknowledge to RabbitMQ to avoid infinite retries
+                            try {
+                                channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+                                logger.debug("Acknowledged message after broadcast error in room {}", roomId);
+                            } catch (IOException ackEx) {
+                                logger.error("Failed to acknowledge message after broadcast error in room {}: {}", roomId, ackEx.getMessage());
+                            }
+                        }
                     }
 
                 } catch (JsonSyntaxException e) {

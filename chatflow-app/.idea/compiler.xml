@@ -9,6 +9,7 @@
         <module name="server" />
         <module name="consumer-server" />
         <module name="client-part2" />
+        <module name="distributed-client" />
         <module name="client-part1" />
       </profile>
     </annotationProcessing>

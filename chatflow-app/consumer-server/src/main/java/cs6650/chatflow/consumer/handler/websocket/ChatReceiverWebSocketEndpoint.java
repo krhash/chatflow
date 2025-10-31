@@ -2,6 +2,9 @@ package cs6650.chatflow.consumer.handler.websocket;
 
 import cs6650.chatflow.consumer.commons.Constants;
 import cs6650.chatflow.consumer.util.RoomManager;
+import cs6650.chatflow.consumer.MessageAcknowledgmentProcessor;
+import cs6650.chatflow.consumer.model.MessageAck;
+import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,11 +20,12 @@ import java.util.concurrent.*;
  * Clients connect with /chatflow-receiver/{roomId} and automatically start receiving messages.
  * Implements heartbeat mechanism to keep connections alive.
  */
-@ServerEndpoint(Constants.CHAT_RECEIVER_PATH)
-public class ChatReceiverWebSocketEndpoint {
-    private static final Logger logger = LoggerFactory.getLogger(ChatReceiverWebSocketEndpoint.class);
+    @ServerEndpoint(Constants.CHAT_RECEIVER_PATH)
+    public class ChatReceiverWebSocketEndpoint {
+        private static final Logger logger = LoggerFactory.getLogger(ChatReceiverWebSocketEndpoint.class);
 
-    private final RoomManager roomManager = RoomManager.getInstance();
+        private final RoomManager roomManager = RoomManager.getInstance();
+        private static final Gson gson = new Gson();
 
     @OnOpen
     public void onOpen(Session session, @PathParam("roomId") String roomId) {
@@ -149,8 +153,38 @@ public class ChatReceiverWebSocketEndpoint {
         }
     }
 
-    /**
-     * This endpoint only receives messages from the server, so no @OnMessage handler for client messages.
-     * Messages are sent automatically when they arrive from RabbitMQ via the RoomManager.broadcastToRoom() method.
-     */
-}
+        /**
+         * Handles client messages, primarily acknowledgments for delivered messages.
+         */
+        @OnMessage
+        public void onMessage(Session session, String message, @PathParam("roomId") String roomId) {
+            try {
+                // Try to parse as MessageAck
+                MessageAck ack = gson.fromJson(message, MessageAck.class);
+                if (ack != null && "ack".equals(ack.getMessageType())) {
+                    // Handle acknowledgment
+                    String normalizedRoomId = roomManager.normalizeRoomId(roomId);
+                    String userId = (String) session.getUserProperties().get("userId");
+
+                    if (userId != null) {
+                        ack.setUserId(userId);
+                        ack.setRoomId(normalizedRoomId);
+
+                        boolean canAck = roomManager.processAcknowledgment(ack);
+                        logger.debug("Processed acknowledgment from user {} for message {} in room {}, canAck={}",
+                            userId, ack.getMessageId(), normalizedRoomId, canAck);
+
+                        // Note: The actual RabbitMQ ACK happens in the consumer thread
+                        // when all users have acknowledged
+                    } else {
+                        logger.warn("Received ack from session without userId: {}", session.getId());
+                    }
+                } else {
+                    logger.warn("Received unknown message type from session {} in room {}: {}", session.getId(), roomId, message);
+                }
+
+            } catch (Exception e) {
+                logger.error("Error processing message from session {} in room {}: {}", session.getId(), roomId, e.getMessage());
+            }
+        }
+    }

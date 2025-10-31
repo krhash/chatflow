@@ -45,7 +45,7 @@ public class MessagePublisher {
             String routingKey = "room." + roomNumber;  // routing key should be "room.2" for room 2
             String exchangeName = RabbitMQConfig.getExchangeName();
 
-            logger.info("Publishing message {} to exchange '{}' with routing key '{}'",
+            logger.debug("Publishing message {} to exchange '{}' with routing key '{}'",
                 queueMessage.getMessageId(), exchangeName, routingKey);
 
             // Enable publisher confirms to ensure message delivery
@@ -60,7 +60,7 @@ public class MessagePublisher {
 
             // Wait for confirmation (with timeout)
             if (channel.waitForConfirms(5000)) { // 5 second timeout
-                logger.info("Successfully published message {} to room {} with routing key '{}'",
+                logger.debug("Successfully published message {} to room {} with routing key '{}'",
                     queueMessage.getMessageId(), roomId, routingKey);
             } else {
                 logger.error("Failed to confirm publishing of message {} to room {} with routing key '{}'",

@@ -17,6 +17,7 @@ public class Bootstrap implements ServletContextListener {
     private static final Logger logger = LoggerFactory.getLogger(Bootstrap.class);
 
     private MessageConsumerManager consumerManager;
+    private MessageAcknowledgmentProcessor ackProcessor;
 
     @Override
     public void contextInitialized(ServletContextEvent sce) {

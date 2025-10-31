@@ -9,6 +9,7 @@
         <option value="$PROJECT_DIR$/client-part2/pom.xml" />
         <option value="$PROJECT_DIR$/client-part1-simplified/pom.xml" />
         <option value="$PROJECT_DIR$/consumer-server/pom.xml" />
+        <option value="$PROJECT_DIR$/distributed-client/pom.xml" />
       </list>
     </option>
     <option name="ignoredFiles">
