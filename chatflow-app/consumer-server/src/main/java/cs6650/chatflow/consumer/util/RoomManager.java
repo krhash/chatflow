@@ -28,6 +28,9 @@ public class RoomManager {
     // Enhanced: Room ID -> RoomState (user tracking + message delivery)
     private final Map<String, RoomState> roomStates = new ConcurrentHashMap<>();
 
+    // Circuit breakers: Room ID -> CircuitBreaker (per-room failure protection)
+    private final Map<String, CircuitBreaker> circuitBreakers = new ConcurrentHashMap<>();
+
     private static class SingletonHolder {
         private static final RoomManager INSTANCE = new RoomManager();
     }
@@ -86,7 +89,9 @@ public class RoomManager {
             // Clean up empty rooms
             if (roomState.isEmpty()) {
                 roomStates.remove(roomId);
-                logger.info("Cleaned up empty room {}", roomId);
+                // Remove circuit breaker for empty room to free memory
+                circuitBreakers.remove(roomId);
+                logger.info("Cleaned up empty room {} and circuit breaker", roomId);
             }
         }
 
@@ -129,17 +134,48 @@ public class RoomManager {
             // Clean up empty rooms
             if (roomState.isEmpty()) {
                 roomStates.remove(roomId);
-                logger.info("Cleaned up empty room {}", roomId);
+                // Remove circuit breaker for empty room to free memory
+                circuitBreakers.remove(roomId);
+                logger.info("Cleaned up empty room {} and circuit breaker", roomId);
             }
         }
     }
 
     /**
      * Broadcasts a message to all active WebSocket sessions in the room.
+     * Protected by circuit breaker to prevent cascading failures.
      * Returns true if at least one session received the message.
      * For Option A: Immediate ACK - client acknowledgments become optional QoS.
      */
     public boolean broadcastToRoom(ChatEvent event, String roomId) {
+        // Get or create circuit breaker for this room
+        CircuitBreaker circuitBreaker = circuitBreakers.computeIfAbsent(roomId,
+            k -> new CircuitBreaker("Room-" + roomId));
+
+        try {
+            final boolean[] result = new boolean[1];
+            boolean executed = circuitBreaker.execute(() -> {
+                result[0] = performBroadcast(event, roomId);
+            });
+
+            if (!executed) {
+                // Circuit breaker is open, broadcast prevented
+                logger.warn("Broadcast prevented for room {} due to circuit breaker protection", roomId);
+                return false;
+            }
+
+            return result[0];
+        } catch (Exception e) {
+            // This shouldn't happen as performBroadcast doesn't throw exceptions
+            logger.error("Unexpected error during broadcast to room {}: {}", roomId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Performs the actual broadcasting logic without circuit breaker protection.
+     */
+    private boolean performBroadcast(ChatEvent event, String roomId) {
         RoomState roomState = roomStates.get(roomId);
         if (roomState == null) {
             logger.debug("No room state for room {}", roomId);
@@ -179,9 +215,15 @@ public class RoomManager {
 
         logger.debug("Broadcasted message {} to {} sessions in room {}", event.getMessageId(), deliveredToSessions, roomId);
 
+        boolean success = deliveredToSessions > 0;
+        if (!success) {
+            // Circuit breaker will record this as a failure
+            logger.warn("Broadcast failed: no sessions received message {} in room {}", event.getMessageId(), roomId);
+        }
+
         // For TEXT messages, client acknowledgments are now optional QoS
         // RabbitMQ ACK happens immediately in the consumer after broadcast attempt
-        return deliveredToSessions > 0;
+        return success;
     }
 
     /**
@@ -284,5 +326,23 @@ public class RoomManager {
         }
 
         return roomId; // Already in numeric format
+    }
+
+    /**
+     * Gets the current state of the circuit breaker for a room.
+     * Returns null if no circuit breaker exists for the room.
+     */
+    public CircuitBreaker.State getCircuitBreakerState(String roomId) {
+        CircuitBreaker circuitBreaker = circuitBreakers.get(roomId);
+        return circuitBreaker != null ? circuitBreaker.getState() : null;
+    }
+
+    /**
+     * Gets the number of consecutive failures for a room's circuit breaker.
+     * Returns -1 if no circuit breaker exists for the room.
+     */
+    public int getCircuitBreakerFailures(String roomId) {
+        CircuitBreaker circuitBreaker = circuitBreakers.get(roomId);
+        return circuitBreaker != null ? circuitBreaker.getConsecutiveFailures() : -1;
     }
 }
