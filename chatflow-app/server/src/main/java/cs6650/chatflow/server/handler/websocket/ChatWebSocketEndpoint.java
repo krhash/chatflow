@@ -1,9 +1,10 @@
 package cs6650.chatflow.server.handler.websocket;
 
 import cs6650.chatflow.server.model.ChatCommand;
-import cs6650.chatflow.server.model.ChatEventResponse;
 import cs6650.chatflow.server.util.ValidationUtils;
 import cs6650.chatflow.server.commons.Constants;
+import cs6650.chatflow.server.messaging.MessagePublisherManager;
+import cs6650.chatflow.server.messaging.MessagePublisher;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import org.slf4j.Logger;
@@ -59,7 +60,7 @@ public class ChatWebSocketEndpoint {
         try {
             ChatCommand command = gson.fromJson(msgJson, ChatCommand.class);
 
-            logger.debug("Received: {}", msgJson);
+            logger.info("Received: {}", msgJson);
 
             String validationError = ValidationUtils.validate(command);
             if (validationError != null) {
@@ -69,22 +70,11 @@ public class ChatWebSocketEndpoint {
                 return;
             }
 
-            ChatEventResponse response = new ChatEventResponse();
-            // Copy fields from command
-            response.setMessageId(command.getMessageId());
-            response.setUserId(command.getUserId());
-            response.setUsername(command.getUsername());
-            response.setMessage(command.getMessage());
-            response.setTimestamp(command.getTimestamp());
-            response.setMessageType(command.getMessageType());
+            // Publish message to RabbitMQ instead of echoing back
+            MessagePublisher publisher = MessagePublisherManager.getInstance();
+            publisher.publishMessage(command, roomId, session);
 
-            // Add server-side metadata
-            response.setServerTimestamp(Instant.now().toString());
-            response.setStatus(Constants.STATUS_OK);
-
-            String responseJson = gson.toJson(response);
-            logger.debug("Sent: {}", responseJson);
-            sendTextSafe(session, responseJson);
+            logger.info("Message published to queue for room {}: {}", roomId, command.getMessageId());
 
         } catch (JsonSyntaxException e) {
             logger.error("Invalid JSON - session: {}, message: {}, error: {}", session.getId(), msgJson, e.getMessage());
