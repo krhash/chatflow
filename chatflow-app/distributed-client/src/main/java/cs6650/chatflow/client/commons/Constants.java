@@ -29,21 +29,8 @@ public class Constants {
     public static final int MAX_ROOM_ID = 20;
     public static final int TOTAL_ROOMS = 20;
 
-    // Connection pools
-    public static final int PRODUCER_CONNECTION_POOL_SIZE = 20; // One per room for sending
-    public static final int CONSUMER_CONNECTION_POOL_SIZE = 20; // One per room for receiving
-
-    // Thread pools
-    public static final int SENDER_THREAD_POOL_SIZE = 20; // Sender threads for message production
-    public static final int RECEIVER_THREAD_POOL_SIZE = 20; // Receiver threads for message consumption
-
-    // Timeout and retry configuration
-    public static final long MESSAGE_TIMEOUT_MS = 30000; // 30 seconds
-    public static final int MAX_RETRIES = 3;
-    public static final long RETRY_DELAY_MS = 1000; // 1 second
-
-    // WebSocket connection timeout
-    public static final int WEBSOCKET_CONNECTION_TIMEOUT_MS = 10000;
+    // Message queue capacity
+    public static final int MESSAGE_QUEUE_CAPACITY = 5000;
 
     // User ID prefix for this client
     public static final String USER_ID_PREFIX = "distributed-user-";

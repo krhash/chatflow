@@ -2,9 +2,13 @@ package cs6650.chatflow.client;
 
 import cs6650.chatflow.client.commons.ClientMetrics;
 import cs6650.chatflow.client.commons.Constants;
+import cs6650.chatflow.client.connection.ProducerConnectionPool;
 import cs6650.chatflow.client.connection.ReceiverConnectionPool;
 import cs6650.chatflow.client.connection.SenderConnectionPool;
+import cs6650.chatflow.client.connection.SimpleWebSocketClient;
 import cs6650.chatflow.client.model.ChatMessage;
+import cs6650.chatflow.client.model.MessageQueueEntry;
+import cs6650.chatflow.client.queues.MessageQueue;
 
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -20,23 +24,21 @@ import org.java_websocket.handshake.ServerHandshake;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Simple distributed client implementation with executor services.
- * Generates and sends exactly 500K messages following the pattern:
- *  - 5% JOIN messages (creates users)
- *  - 90% TEXT messages (using created user IDs)
- *  - 5% LEAVE messages (removes users)
- */
 public class DistributedClient {
 
     private static final Logger logger = LoggerFactory.getLogger(DistributedClient.class);
 
     private static final int TOTAL_MESSAGES = 500_000; // Exactly 500K messages
-    private static final int THREAD_POOL_SIZE = 20; // Number of sender threads
-    private static final int MESSAGES_PER_THREAD = TOTAL_MESSAGES / THREAD_POOL_SIZE; // 25,000 per thread
+    private static final int THREAD_POOL_SIZE = 100; // Number of sender threads - increased for concurrency
 
-    // Message queues
-    private final BlockingQueue<ChatMessage> messageQueue = new LinkedBlockingQueue<>(1000);
+    // Server configuration
+    private final String producerHost;
+    private final int producerPort;
+    private final String consumerHost;
+    private final int consumerPort;
+
+    // Message queue - shared by all sender threads
+    private final MessageQueue messageQueue = new MessageQueue();
 
     // Statistics
     private final AtomicLong messagesSent = new AtomicLong(0);
@@ -58,6 +60,7 @@ public class DistributedClient {
     // WebSocket connection pools
     private ReceiverConnectionPool consumerConnectionPool;
     private SenderConnectionPool ackConnectionPool;
+    private ProducerConnectionPool producerConnectionPool;
 
     // User management - now that userIds are unique, set ensures no duplicates
     private final Set<String> activeUserIds = ConcurrentHashMap.newKeySet();
@@ -66,14 +69,38 @@ public class DistributedClient {
     // JSON serializer
     private final Gson gson = new GsonBuilder().create();
 
+    /**
+     * Constructor with server configuration.
+     */
+    public DistributedClient(String producerHost, int producerPort, String consumerHost, int consumerPort) {
+        this.producerHost = producerHost;
+        this.producerPort = producerPort;
+        this.consumerHost = consumerHost;
+        this.consumerPort = consumerPort;
+    }
+
     public static void main(String[] args) {
-        DistributedClient client = new DistributedClient();
+        // Parse command line arguments
+        String producerHost = "localhost";
+        int producerPort = 8080;
+        String consumerHost = "localhost";
+        int consumerPort = 8081;
+
+        if (args.length >= 4) {
+            producerHost = args[0];
+            producerPort = Integer.parseInt(args[1]);
+            consumerHost = args[2];
+            consumerPort = Integer.parseInt(args[3]);
+        } else if (args.length > 0) {
+            System.err.println("Usage: java -jar distributed-client.jar [producerHost] [producerPort] [consumerHost] [consumerPort]");
+            System.err.println("Example: java -jar distributed-client.jar localhost 8080 localhost 8081");
+            System.err.println("Using default values: localhost 8080 localhost 8081");
+        }
+
+        DistributedClient client = new DistributedClient(producerHost, producerPort, consumerHost, consumerPort);
         client.start();
     }
 
-    /**
-     * Start the simple distributed client.
-     */
     public void start() {
         try {
             logger.info("Starting Simple Distributed Client...");
@@ -124,12 +151,9 @@ public class DistributedClient {
      */
     private void startSenders() {
         for (int i = 0; i < THREAD_POOL_SIZE; i++) {
-            // Assign room ID in round-robin fashion (room1-room20)
-            int roomNumber = (roomIdCounter.incrementAndGet() - 1) % Constants.TOTAL_ROOMS + Constants.MIN_ROOM_ID;
-            String roomId = "room" + roomNumber;
-            senderExecutor.submit(new SenderWorker(messageQueue, MESSAGES_PER_THREAD, roomId));
+            senderExecutor.submit(new SenderWorker(messageQueue));
         }
-        System.out.println("Started " + THREAD_POOL_SIZE + " sender threads");
+        System.out.println("Started " + THREAD_POOL_SIZE + " sender threads (competing for messages from queue)");
     }
 
     /**
@@ -181,9 +205,10 @@ public class DistributedClient {
             ChatMessage message = createMessage(userId, Constants.MESSAGE_TYPE_JOIN, "User " + userId + " joined");
             message.setUsername(userId); // User ID and username are the same
 
-            // Put message in queue (blocking if queue is full)
+            // Assign random room ID and put entry in queue (blocking if queue is full)
             try {
-                messageQueue.put(message);
+                String randomRoomId = "room" + (new Random().nextInt(Constants.TOTAL_ROOMS) + Constants.MIN_ROOM_ID);
+                messageQueue.put(new MessageQueueEntry(message, randomRoomId));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -215,9 +240,10 @@ public class DistributedClient {
 
             ChatMessage message = createMessage(userId, Constants.MESSAGE_TYPE_TEXT, randomMessage);
 
-            // Put message in queue
+            // Assign random room ID and put entry in queue (blocking if queue is full)
             try {
-                messageQueue.put(message);
+                String randomRoomId = "room" + (new Random().nextInt(Constants.TOTAL_ROOMS) + Constants.MIN_ROOM_ID);
+                messageQueue.put(new MessageQueueEntry(message, randomRoomId));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -246,9 +272,10 @@ public class DistributedClient {
                 activeUserIds.remove(userId); // Remove user when creating LEAVE message
             }
 
-            // Put message in queue
+            // Assign random room ID and put entry in queue (blocking if queue is full)
             try {
-                messageQueue.put(message);
+                String randomRoomId = "room" + (new Random().nextInt(Constants.TOTAL_ROOMS) + Constants.MIN_ROOM_ID);
+                messageQueue.put(new MessageQueueEntry(message, randomRoomId));
                 messagesGenerated++;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -383,6 +410,18 @@ public class DistributedClient {
             }
         }
 
+        // Shut down sender executor to stop processing
+        System.out.println("Shutting down sender executor...");
+        senderExecutor.shutdown();
+        try {
+            if (!senderExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                senderExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            senderExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
         System.out.println("All messages sent. Shutting down workers...");
     }
 
@@ -411,13 +450,13 @@ public class DistributedClient {
      * Initialize consumer connection pool for message reception.
      */
     private void initializeConsumerConnectionPool() {
-        consumerConnectionPool = new ReceiverConnectionPool();
+        consumerConnectionPool = new ReceiverConnectionPool(consumerHost, consumerPort, Constants.CONSUMER_SERVER_PATH);
 
         try {
             // Mark start time when connections begin
             metrics.markStartTime();
 
-            System.out.println("Consumer connection pool initialized for message reception");
+            System.out.println("Consumer connection pool initialized for message reception at " + consumerHost + ":" + consumerPort);
 
             // Start receiver threads to listen for messages from each room
             startReceivers();
@@ -430,11 +469,14 @@ public class DistributedClient {
     }
 
     /**
-     * Initialize ACK connection pool for DELIVERY_ACK messages.
+     * Initialize producer connection pool for ChatMessages and ACK connection pool.
      */
     private void initializeProducerConnectionPool() {
-        ackConnectionPool = new SenderConnectionPool();
-        System.out.println("ACK connection pool initialized with 20 dedicated WebSocket connections");
+        producerConnectionPool = new ProducerConnectionPool(producerHost, producerPort, Constants.PRODUCER_SERVER_PATH);
+        System.out.println("Producer connection pool initialized with 100 connections (5 per room) for " + producerHost + ":" + producerPort);
+
+        ackConnectionPool = new SenderConnectionPool(producerHost, producerPort, Constants.PRODUCER_SERVER_PATH);
+        System.out.println("ACK connection pool initialized with 20 dedicated WebSocket connections for " + producerHost + ":" + producerPort);
     }
 
     /**
@@ -489,7 +531,6 @@ public class DistributedClient {
         System.out.println("CONFIGURATION:");
         System.out.println("  Total Target Messages: " + TOTAL_MESSAGES);
         System.out.println("  Sender Threads: " + THREAD_POOL_SIZE);
-        System.out.println("  Messages Per Thread: " + MESSAGES_PER_THREAD);
 
 
 
@@ -509,101 +550,50 @@ public class DistributedClient {
 
     /**
      * Worker class for sending messages.
+     * Processes messages from the shared queue until generation completes.
      */
     private class SenderWorker implements Runnable {
-        private final BlockingQueue<ChatMessage> queue;
-        private final int targetMessages;
-        private final AtomicInteger sentCount = new AtomicInteger(0);
+        private final MessageQueue messageQueue;
 
-        // Each sender thread gets its own WebSocket connection
-        private WebSocketClient webSocketClient;
-
-        private final String assignedRoomId; // Room ID assigned to this sender thread
-
-        public SenderWorker(BlockingQueue<ChatMessage> queue, int targetMessages, String roomId) {
-            this.queue = queue;
-            this.targetMessages = targetMessages;
-            this.assignedRoomId = roomId;
-
-            // Create WebSocket connection for this thread
-            initializeWebSocketConnection();
-        }
-
-        /**
-         * Initialize WebSocket connection for this sender thread.
-         * URI format: ws://host:port/path/roomId
-         */
-        private void initializeWebSocketConnection() {
-            try {
-                // Connect to producer server with room ID at the end
-                String wsUri = "ws://" + Constants.PRODUCER_SERVER_HOST + ":" +
-                              Constants.PRODUCER_SERVER_PORT + Constants.PRODUCER_SERVER_PATH +
-                              "/" + assignedRoomId;
-                URI uri = URI.create(wsUri);
-
-                // Create new websocket connection per thread to simulate load on the server
-                // If we use a connection pool for sending messages, the server load is always normalized
-                webSocketClient = new SimpleWebSocketClient(uri);
-
-                // Blocking connect with timeout
-                boolean connected = webSocketClient.connectBlocking(10, TimeUnit.SECONDS);
-                if (connected && webSocketClient.isOpen()) {
-                    System.out.println("Sender thread WebSocket connection established for room " + assignedRoomId);
-                } else {
-                    System.err.println("Failed to establish WebSocket connection for room " + assignedRoomId);
-                }
-
-            } catch (Exception e) {
-                System.err.println("Error initializing WebSocket connection for room " + assignedRoomId + ": " + e.getMessage());
-                e.printStackTrace();
-            }
+        public SenderWorker(MessageQueue messageQueue) {
+            this.messageQueue = messageQueue;
         }
 
         @Override
         public void run() {
-            System.out.println("SenderWorker started, target: " + targetMessages + " messages");
+            System.out.println("SenderWorker started for message processing from queue");
 
-            while (sentCount.get() < targetMessages && !Thread.currentThread().isInterrupted()) {
-                try {
-                    // Get message from queue (blocking)
-                    ChatMessage message = queue.take();
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    // Get message entry from queue (blocking) - will throw when generation completes
+                    MessageQueueEntry entry = messageQueue.take();
+                    ChatMessage message = entry.getMessage();
+                    String roomId = entry.getRoomId();
 
                     // Track sent message ID
                     sentMessageIds.add(message.getMessageId());
 
-                    // Send message
-                    sendMessage(message);
-
-                    sentCount.incrementAndGet();
-
-                    // Small delay to prevent overwhelming
-                    Thread.sleep(1);
-
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                } catch (Exception e) {
-                    System.err.println("Error in SenderWorker: " + e.getMessage());
-                    e.printStackTrace();
+                    // Send message via connection pool
+                    sendMessage(message, roomId);
                 }
+            } catch (InterruptedException e) {
+                // Normal shutdown
+                Thread.currentThread().interrupt();
             }
 
-            // Close WebSocket connection
-            if (webSocketClient != null) {
-                webSocketClient.close();
-            }
-
-            System.out.println("SenderWorker completed. Sent " + sentCount.get() + " messages");
+            System.out.println("SenderWorker completed processing messages");
         }
 
         /**
-         * Send a message via WebSocket.
+         * Send a message via the producer connection pool.
          */
-        private void sendMessage(ChatMessage message) {
-            if (webSocketClient != null && !webSocketClient.isClosed()) {
+        private void sendMessage(ChatMessage message, String roomId) {
+            SimpleWebSocketClient connection = producerConnectionPool.getConnection(roomId);
+
+            if (connection != null && connection.isOpen()) {
                 try {
                     String jsonMessage = gson.toJson(message);
-                    webSocketClient.send(jsonMessage);
+                    connection.send(jsonMessage);
                     messagesSent.incrementAndGet();
 
                     // Record message sent in metrics
@@ -617,90 +607,15 @@ public class DistributedClient {
 
                 } catch (Exception e) {
                     metrics.recordConnectionFailure();
-                    System.err.println("Failed to send message " + message.getMessageId() + ": " + e.getMessage());
-                    // Try to reconnect on failure
-                    retryWebSocketConnection();
+                    System.err.println("Failed to send message " + message.getMessageId() + " to room " + roomId + ": " + e.getMessage());
                 }
             } else {
                 metrics.recordConnectionFailure();
-                System.err.println("WebSocket connection not available for message " + message.getMessageId());
-                // Try to reconnect
-                retryWebSocketConnection();
-                // Try sending again if reconnection worked
-                if (webSocketClient != null && !webSocketClient.isClosed()) {
-                    try {
-                        String jsonMessage = gson.toJson(message);
-                        webSocketClient.send(jsonMessage);
-                        messagesSent.incrementAndGet();
-                        metrics.recordMessageSent();
-                    } catch (Exception retryException) {
-                        metrics.recordRetry();
-                        System.err.println("Retry send failed for message " + message.getMessageId() + ": " + retryException.getMessage());
-                    }
-                }
-            }
-        }
-
-        /**
-         * Retry establishing WebSocket connection.
-         */
-        private void retryWebSocketConnection() {
-            try {
-                System.out.println("Attempting to reconnect WebSocket for room " + assignedRoomId);
-                // Connect to producer server with room ID at the end
-                String wsUri = "ws://" + Constants.PRODUCER_SERVER_HOST + ":" +
-                              Constants.PRODUCER_SERVER_PORT + Constants.PRODUCER_SERVER_PATH +
-                              "/" + assignedRoomId;
-                URI uri = URI.create(wsUri);
-
-                webSocketClient = new SimpleWebSocketClient(uri);
-                boolean connected = webSocketClient.connectBlocking(5, TimeUnit.SECONDS);
-                if (connected && webSocketClient.isOpen()) {
-                    System.out.println("WebSocket reconnection successful for room " + assignedRoomId);
-                } else {
-                    System.err.println("WebSocket reconnection failed for room " + assignedRoomId);
-                }
-            } catch (Exception e) {
-                System.err.println("Error during WebSocket reconnection for room " + assignedRoomId + ": " + e.getMessage());
-            }
-        }
-
-        /**
-         * Simple WebSocket client for sending messages.
-         */
-        private class SimpleWebSocketClient extends WebSocketClient {
-
-            public SimpleWebSocketClient(URI serverUri) {
-                super(serverUri);
-            }
-
-            @Override
-            public void onOpen(ServerHandshake handshakedata) {
-                // Connection opened - ready to send
-            }
-
-            @Override
-            public void onMessage(String message) {
-                // Messages from server (typically not expected in simple client)
-                System.out.println("Received message from server: " + message);
-            }
-
-            @Override
-            public void onClose(int code, String reason, boolean remote) {
-                // Connection closed
-            }
-
-            @Override
-            public void onError(Exception ex) {
-                System.err.println("WebSocket error: " + ex.getMessage());
+                System.err.println("No connection available for room " + roomId + " to send message " + message.getMessageId());
             }
         }
     }
 
-    /**
-     * Simple receiver worker class for the SimpleDistributedClient.
-     * Listens for messages from the consumer server and logs them.
-     */
     private class SimpleReceiverWorker implements Runnable {
         private final String roomId;
 

@@ -103,7 +103,7 @@ public class RoomMessageConsumer {
                         }
                     } else {
                         // Handle regular messages (TEXT) - ACK immediately after broadcast attempt
-                        // Client acknowledgments are optional "best effort" QoS, not blocking operations
+                        // Client acknowledgments are optional "best effort", not blocking operations
                         try {
                             boolean broadcastSuccessful = roomManager.broadcastToRoom(event, roomId);
 

@@ -18,6 +18,51 @@ A high-throughput WebSocket chat system for performance testing with producer-co
 - Java 8 or higher
 - Apache Tomcat 9+ (for server deployment)
 - Maven 3.6+
+- RabbitMQ (for producer and consumer server components)
+
+## RabbitMQ Configuration
+
+The producer and consumer server components require RabbitMQ configuration. Both servers can load RabbitMQ settings from either:
+1. Internal `rabbitmq.properties` file (included in WAR)
+2. External properties file (recommended for deployments)
+
+### Internal Configuration (Development)
+Each server module (`server/` and `consumer-server/`) includes a `src/main/resources/rabbitmq.properties` file with default settings:
+```properties
+rabbitmq.host=localhost
+rabbitmq.port=5672
+rabbitmq.username=guest
+rabbitmq.password=guest
+rabbitmq.virtualhost=/
+rabbitmq.exchange=chat.exchange
+rabbitmq.exchange.type=topic
+rabbitmq.connection.timeout=60000
+```
+
+### External Configuration (Production)
+For deployment, create an external properties file (e.g., `/opt/chatflow/rabbitmq.properties`) and set the system property:
+
+```bash
+# Example for Tomcat
+export CATALINA_OPTS="-Drabbitmq.config.path=/opt/chatflow/rabbitmq.properties"
+```
+
+This allows modifying RabbitMQ hostname without rebuilding the WAR file. Simply modify the external properties file and restart Tomcat.
+
+### Building Producer and Consumer Servers
+```bash
+# Build producer server
+cd server && mvn clean package
+
+# Build consumer server
+cd ../consumer-server && mvn clean package
+```
+
+### Deploying to Tomcat
+1. Copy `server/target/server-1.0-SNAPSHOT.war` to Tomcat's `webapps/` as `chatflow-server.war`
+2. Copy `consumer-server/target/consumer-server-1.0-SNAPSHOT.war` to Tomcat's `webapps/` as `consumer-server.war`
+3. Set `CATALINA_OPTS` for external config (optional but recommended)
+4. Start Tomcat
 
 ## Server Setup
 

@@ -21,6 +21,19 @@ public class RabbitMQConfig {
     }
 
     private static void loadProperties() {
+        // First try to load from external file specified by system property
+        String configPath = System.getProperty("rabbitmq.config.path");
+        if (configPath != null && !configPath.trim().isEmpty()) {
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(configPath)) {
+                properties.load(fis);
+                logger.info("RabbitMQ configuration loaded from external file: {}", configPath);
+                return;
+            } catch (IOException e) {
+                logger.warn("Failed to load RabbitMQ configuration from external file {}, falling back to classpath", configPath, e);
+            }
+        }
+
+        // Fall back to classpath resource
         try (InputStream input = RabbitMQConfig.class.getClassLoader().getResourceAsStream(CONFIG_FILE)) {
             if (input != null) {
                 properties.load(input);
@@ -28,7 +41,7 @@ public class RabbitMQConfig {
             } else {
                 logger.warn("RabbitMQ configuration not found, using default values");
                 // Set some defaults
-                properties.setProperty("rabbitmq.host", "localhost");
+                properties.setProperty("rabbitmq.host", "54.173.148.11");
                 properties.setProperty("rabbitmq.port", "5672");
                 properties.setProperty("rabbitmq.username", "guest");
                 properties.setProperty("rabbitmq.password", "guest");
@@ -44,7 +57,7 @@ public class RabbitMQConfig {
     }
 
     public static String getHost() {
-        return properties.getProperty("rabbitmq.host", "localhost");
+        return properties.getProperty("rabbitmq.host", "54.173.148.11");
     }
 
     public static int getPort() {

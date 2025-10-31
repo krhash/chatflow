@@ -27,12 +27,29 @@ public class ReceiverConnectionPool {
     private final Map<String, SimpleConsumerWebSocketClient> roomConnections = new ConcurrentHashMap<>();
     private final Map<String, CopyOnWriteArrayList<Consumer<ChatMessage>>> messageListeners = new ConcurrentHashMap<>();
     private final Gson gson = new GsonBuilder().create();
+    private final String serverHost;
+    private final int serverPort;
+    private final String serverPath;
 
     /**
      * Creates a connection pool with connections for all rooms.
-     * Initializes connections for rooms 1-20.
+     * Uses default configuration from Constants.
      */
     public ReceiverConnectionPool() {
+        this(Constants.CONSUMER_SERVER_HOST, Constants.CONSUMER_SERVER_PORT, Constants.CONSUMER_SERVER_PATH);
+    }
+
+    /**
+     * Creates a connection pool with connections for all rooms using specified server configuration.
+     * @param serverHost The consumer server hostname
+     * @param serverPort The consumer server port
+     * @param serverPath The consumer server context path
+     */
+    public ReceiverConnectionPool(String serverHost, int serverPort, String serverPath) {
+        this.serverHost = serverHost;
+        this.serverPort = serverPort;
+        this.serverPath = serverPath;
+
         // Initialize 20 connections for rooms 1-20
         for (int roomId = 1; roomId <= 20; roomId++) {
             initializeConnection("room" + roomId);
@@ -45,9 +62,7 @@ public class ReceiverConnectionPool {
     private void initializeConnection(String roomId) {
         try {
             // Connect to consumer server for this specific room
-            String wsUri = "ws://" + Constants.CONSUMER_SERVER_HOST + ":" +
-                          Constants.CONSUMER_SERVER_PORT + Constants.CONSUMER_SERVER_PATH +
-                          roomId;
+            String wsUri = "ws://" + serverHost + ":" + serverPort + serverPath + roomId;
             URI uri = URI.create(wsUri);
 
             SimpleConsumerWebSocketClient client = new SimpleConsumerWebSocketClient(uri, roomId);

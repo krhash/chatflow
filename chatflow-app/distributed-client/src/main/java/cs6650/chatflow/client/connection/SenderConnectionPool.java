@@ -20,11 +20,28 @@ public class SenderConnectionPool {
 
     private final Map<String, SimpleWebSocketClient> connections;
     private final Gson gson = new Gson();
+    private final String serverHost;
+    private final int serverPort;
+    private final String serverPath;
 
     /**
      * Creates a connection pool with 20 connections (one for each room).
+     * Uses default configuration from Constants.
      */
     public SenderConnectionPool() {
+        this(Constants.PRODUCER_SERVER_HOST, Constants.PRODUCER_SERVER_PORT, Constants.PRODUCER_SERVER_PATH);
+    }
+
+    /**
+     * Creates a connection pool with 20 connections using specified server configuration.
+     * @param serverHost The producer server hostname
+     * @param serverPort The producer server port
+     * @param serverPath The producer server context path
+     */
+    public SenderConnectionPool(String serverHost, int serverPort, String serverPath) {
+        this.serverHost = serverHost;
+        this.serverPort = serverPort;
+        this.serverPath = serverPath;
         this.connections = new ConcurrentHashMap<>();
 
         // Initialize 20 connections for rooms 1-20
@@ -39,9 +56,7 @@ public class SenderConnectionPool {
     private void initializeConnection(String roomId) {
         try {
             // Connect to producer server for this specific room
-            String wsUri = "ws://" + Constants.PRODUCER_SERVER_HOST + ":" +
-                          Constants.PRODUCER_SERVER_PORT + Constants.PRODUCER_SERVER_PATH +
-                          "/" + roomId;
+            String wsUri = "ws://" + serverHost + ":" + serverPort + serverPath + "/" + roomId;
             URI uri = URI.create(wsUri);
 
             SimpleWebSocketClient client = new SimpleWebSocketClient(uri, roomId);
