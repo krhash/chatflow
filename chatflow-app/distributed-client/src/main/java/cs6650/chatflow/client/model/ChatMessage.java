@@ -12,8 +12,6 @@ public class ChatMessage {
     private String timestamp;
     private String messageType;
     private String roomId;
-    private String userIdAck; // For acknowledgment tracking
-    private String roomIdAck; // For acknowledgment tracking
 
     // Getters and setters
     public String getMessageId() { return messageId; }
@@ -37,9 +35,4 @@ public class ChatMessage {
     public String getRoomId() { return roomId; }
     public void setRoomId(String roomId) { this.roomId = roomId; }
 
-    public String getUserIdAck() { return userIdAck; }
-    public void setUserIdAck(String userIdAck) { this.userIdAck = userIdAck; }
-
-    public String getRoomIdAck() { return roomIdAck; }
-    public void setRoomIdAck(String roomIdAck) { this.roomIdAck = roomIdAck; }
 }

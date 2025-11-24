@@ -57,7 +57,7 @@ public class RoomManager {
         String userId = (String) session.getUserProperties().get("userId");
         if (userId != null) {
             roomState.addUser(userId, session);
-            logger.info("Added user {} (session {}) to room {}", userId, session.getId(), roomId);
+            logger.debug("Added user {} (session {}) to room {}", userId, session.getId(), roomId);
         } else {
             logger.warn("Session {} connected without userId to room {}", session.getId(), roomId);
         }
@@ -95,7 +95,7 @@ public class RoomManager {
             }
         }
 
-        logger.info("Removed session {} from room {}", session.getId(), roomId);
+        logger.debug("Removed session {} from room {}", session.getId(), roomId);
     }
 
     /**
@@ -113,7 +113,7 @@ public class RoomManager {
             // Add user without session initially (user identified via ACK messages)
             User user = new User(userId, null); // No WebSocket session yet
             roomState.addUser(userId, null);
-            logger.info("Added user {} to active users in room {}", userId, roomId);
+            logger.debug("Added user {} to active users in room {}", userId, roomId);
         }
     }
 
@@ -129,7 +129,7 @@ public class RoomManager {
         RoomState roomState = roomStates.get(roomId);
         if (roomState != null) {
             roomState.removeUser(userId);
-            logger.info("Removed user {} from active users in room {}", userId, roomId);
+            logger.debug("Removed user {} from active users in room {}", userId, roomId);
 
             // Clean up empty rooms
             if (roomState.isEmpty()) {
@@ -252,7 +252,7 @@ public class RoomManager {
                 ack.getUserId(), ack.getMessageId(), ack.getRoomId(), deliveryState.getPendingAcknowledgements());
 
             if (deliveryState.isFullyAcknowledged()) {
-                logger.info("Message {} fully acknowledged in room {} and can be removed from queue", ack.getMessageId(), ack.getRoomId());
+                logger.debug("Message {} fully acknowledged in room {} and can be removed from queue", ack.getMessageId(), ack.getRoomId());
                 return true; // Signal that message can be acknowledged to RabbitMQ
             }
         }

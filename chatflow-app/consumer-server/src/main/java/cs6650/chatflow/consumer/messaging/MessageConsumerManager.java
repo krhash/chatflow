@@ -3,6 +3,7 @@ package cs6650.chatflow.consumer.messaging;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
+import cs6650.chatflow.consumer.database.DatabaseService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,6 +23,7 @@ public class MessageConsumerManager {
     private final Map<String, RoomMessageConsumer> consumers = new ConcurrentHashMap<>();
     private Connection connection;
     private boolean started = false;
+    private DatabaseService databaseService;  // ← NEW: Database service reference
 
     private static class SingletonHolder {
         private static final MessageConsumerManager INSTANCE = new MessageConsumerManager();
@@ -37,12 +39,15 @@ public class MessageConsumerManager {
 
     /**
      * Initializes the connection and starts all room consumers.
+     * ← UPDATED: Now accepts DatabaseService parameter
      */
-    public synchronized void start() {
+    public synchronized void start(DatabaseService databaseService) {
         if (started) {
             logger.warn("MessageConsumerManager already started");
             return;
         }
+
+        this.databaseService = databaseService;  // ← NEW: Store database service
 
         try {
             logger.info("Initializing MessageConsumerManager");
@@ -65,10 +70,12 @@ public class MessageConsumerManager {
                 String roomIdStr = String.valueOf(roomId);
                 try {
                     Channel channel = connection.createChannel();
-                    RoomMessageConsumer consumer = new RoomMessageConsumer(roomIdStr, channel);
+
+                    // ← UPDATED: Pass databaseService to consumer
+                    RoomMessageConsumer consumer = new RoomMessageConsumer(roomIdStr, channel, databaseService);
                     consumer.startConsuming();
                     consumers.put(roomIdStr, consumer);
-                    logger.info("Started consumer for room {}", roomIdStr);
+                    logger.info("Started consumer for room {} with database persistence", roomIdStr);
                 } catch (Exception e) {
                     logger.error("Failed to start consumer for room {}", roomIdStr, e);
                     // Continue with other rooms
@@ -76,7 +83,7 @@ public class MessageConsumerManager {
             }
 
             started = true;
-            logger.info("Started {} room consumers", consumers.size());
+            logger.info("Started {} room consumers with database integration", consumers.size());
 
         } catch (IOException | TimeoutException e) {
             logger.error("Failed to initialize MessageConsumerManager", e);

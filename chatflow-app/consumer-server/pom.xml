@@ -14,6 +14,7 @@
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <aws.sdk.version>1.12.772</aws.sdk.version>
     </properties>
 
     <dependencies>
@@ -76,6 +77,43 @@
             <version>5.18.0</version>
         </dependency>
 
+        <!-- ========== AWS DynamoDB Dependencies (SDK v1) ========== -->
+
+        <!-- AWS DynamoDB SDK -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-dynamodb</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+
+        <!-- AWS Core SDK -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-core</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+
+        <!-- AWS STS (for session tokens) -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-sts</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+
+        <!-- Apache HTTP Client -->
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.14</version>
+        </dependency>
+
+        <!-- Jackson for JSON processing -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.15.3</version>
+        </dependency>
+
     </dependencies>
 
     <build>
@@ -113,6 +151,13 @@
                     <warSourceDirectory>web</warSourceDirectory>
                     <webXml>web/WEB-INF/web.xml</webXml>
                 </configuration>
+            </plugin>
+
+            <!-- Dependency Plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.6.0</version>
             </plugin>
         </plugins>
     </build>

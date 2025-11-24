@@ -1,8 +1,8 @@
 package cs6650.chatflow.consumer.messaging;
 
+import cs6650.chatflow.consumer.database.DatabaseService;
 import cs6650.chatflow.consumer.model.ChatEvent;
 import cs6650.chatflow.consumer.util.RoomManager;
-import cs6650.chatflow.consumer.messaging.MessageConsumerManager;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import com.rabbitmq.client.*;
@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * Message consumer that reads messages from a specific room queue and broadcasts them to WebSocket clients.
+ * Now also persists messages to database.
  */
 public class RoomMessageConsumer {
     private static final Logger logger = LoggerFactory.getLogger(RoomMessageConsumer.class);
@@ -23,13 +24,16 @@ public class RoomMessageConsumer {
     private final String queueName;
     private final Channel channel;
     private final RoomManager roomManager;
+    private final DatabaseService databaseService;  // ← NEW: Database service
     private String consumerTag;
 
-    public RoomMessageConsumer(String roomId, Channel channel) {
+    // ← UPDATED: Constructor now accepts DatabaseService
+    public RoomMessageConsumer(String roomId, Channel channel, DatabaseService databaseService) {
         this.roomId = roomId;
         this.queueName = "room." + roomId;
         this.channel = channel;
         this.roomManager = RoomManager.getInstance();
+        this.databaseService = databaseService;  // ← NEW
     }
 
     /**
@@ -53,17 +57,29 @@ public class RoomMessageConsumer {
                     ChatEvent event = gson.fromJson(messageBody, ChatEvent.class);
                     if (event == null) {
                         logger.warn("Failed to parse message for room {}: null event", roomId);
-                        // Acknowledge invalid message to prevent re-delivery
                         channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
                         return;
                     }
+
+                    // ========== NEW: PERSIST TO DATABASE ==========
+                    if (databaseService != null) {
+                        try {
+                            databaseService.writeMessage(event, roomId);
+                            logger.trace("Queued message {} for database write", event.getMessageId());
+                        } catch (Exception dbError) {
+                            logger.error("Database write failed for message {}: {}",
+                                    event.getMessageId(), dbError.getMessage());
+                            // Continue processing - don't fail entire message on DB error
+                        }
+                    }
+                    // ==============================================
 
                     // Handle different message types
                     String messageType = event.getMessageType();
                     if ("JOIN".equals(messageType)) {
                         // Handle JOIN message - add user to room
                         roomManager.addUserToRoom(event.getUserId(), roomId);
-                        logger.info("User {} joined room {}", event.getUserId(), roomId);
+                        logger.debug("User {} joined room {}", event.getUserId(), roomId);
                         // Broadcast JOIN to all WebSocket clients but acknowledge immediately since it doesn't need per-user ACK
                         roomManager.broadcastToRoom(event, roomId);
                         channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
@@ -72,7 +88,7 @@ public class RoomMessageConsumer {
                     } else if ("LEAVE".equals(messageType)) {
                         // Handle LEAVE message - remove user from room
                         roomManager.removeUserFromRoom(event.getUserId(), roomId);
-                        logger.info("User {} left room {}", event.getUserId(), roomId);
+                        logger.debug("User {} left room {}", event.getUserId(), roomId);
                         // Broadcast LEAVE but acknowledge immediately
                         roomManager.broadcastToRoom(event, roomId);
                         channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);

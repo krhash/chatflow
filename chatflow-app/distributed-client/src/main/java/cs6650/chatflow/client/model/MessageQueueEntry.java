@@ -35,11 +35,4 @@ public class MessageQueueEntry {
         return roomId;
     }
 
-    /**
-     * Gets the numeric room ID.
-     * @return room number (1-20)
-     */
-    public int getRoomNumber() {
-        return Integer.parseInt(roomId.substring(4)); // "room" + number
-    }
 }

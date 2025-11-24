@@ -7,6 +7,10 @@ public class Constants {
     // WebSocket paths
     public static final String CHAT_RECEIVER_PATH = "/chatflow-receiver/{roomId}";
 
+    // REST API endpoints
+    public static final String HEALTH_ENDPOINT = "/api/health";
+    public static final String METRICS_ENDPOINT = "/api/metrics";
+
     // Heartbeat configuration
     public static final int HEARTBEAT_INTERVAL_SECONDS = 30;
 

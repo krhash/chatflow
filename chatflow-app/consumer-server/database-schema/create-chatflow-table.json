@@ -1,0 +1,107 @@
+{
+  "TableName": "chatflow-messages",
+  "AttributeDefinitions": [
+    {
+      "AttributeName": "message_id",
+      "AttributeType": "S"
+    },
+    {
+      "AttributeName": "room_id",
+      "AttributeType": "N"
+    },
+    {
+      "AttributeName": "timestamp",
+      "AttributeType": "N"
+    },
+    {
+      "AttributeName": "user_id",
+      "AttributeType": "S"
+    },
+    {
+      "AttributeName": "message_type",
+      "AttributeType": "S"
+    }
+  ],
+  "KeySchema": [
+    {
+      "AttributeName": "message_id",
+      "KeyType": "HASH"
+    }
+  ],
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "room-timestamp-index",
+      "KeySchema": [
+        {
+          "AttributeName": "room_id",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "timestamp",
+          "KeyType": "RANGE"
+        }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      },
+      "ProvisionedThroughput": {
+        "ReadCapacityUnits": 50,
+        "WriteCapacityUnits": 50
+      }
+    },
+    {
+      "IndexName": "user-timestamp-index",
+      "KeySchema": [
+        {
+          "AttributeName": "user_id",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "timestamp",
+          "KeyType": "RANGE"
+        }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      },
+      "ProvisionedThroughput": {
+        "ReadCapacityUnits": 30,
+        "WriteCapacityUnits": 30
+      }
+    },
+    {
+      "IndexName": "type-timestamp-index",
+      "KeySchema": [
+        {
+          "AttributeName": "message_type",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "timestamp",
+          "KeyType": "RANGE"
+        }
+      ],
+      "Projection": {
+        "ProjectionType": "KEYS_ONLY"
+      },
+      "ProvisionedThroughput": {
+        "ReadCapacityUnits": 10,
+        "WriteCapacityUnits": 10
+      }
+    }
+  ],
+  "ProvisionedThroughput": {
+    "ReadCapacityUnits": 100,
+    "WriteCapacityUnits": 100
+  },
+  "Tags": [
+    {
+      "Key": "Project",
+      "Value": "ChatFlow"
+    },
+    {
+      "Key": "Environment",
+      "Value": "Assignment"
+    }
+  ]
+}
