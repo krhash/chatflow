@@ -1,0 +1,229 @@
+{
+  "databaseType": "DynamoDB",
+  "analytics": {
+    "totalMessages": 0,
+    "topActiveUsers": [
+      {
+        "value": 78,
+        "key": "8588"
+      },
+      {
+        "value": 78,
+        "key": "4742"
+      },
+      {
+        "value": 78,
+        "key": "21400"
+      },
+      {
+        "value": 78,
+        "key": "16320"
+      },
+      {
+        "value": 76,
+        "key": "1841"
+      },
+      {
+        "value": 76,
+        "key": "10686"
+      },
+      {
+        "value": 76,
+        "key": "6966"
+      },
+      {
+        "value": 76,
+        "key": "4624"
+      },
+      {
+        "value": 76,
+        "key": "23632"
+      },
+      {
+        "value": 76,
+        "key": "23995"
+      }
+    ],
+    "topActiveRooms": [
+      {
+        "value": 55036,
+        "key": 20
+      },
+      {
+        "value": 55003,
+        "key": 17
+      },
+      {
+        "value": 54990,
+        "key": 5
+      },
+      {
+        "value": 54970,
+        "key": 12
+      },
+      {
+        "value": 54946,
+        "key": 1
+      },
+      {
+        "value": 54893,
+        "key": 4
+      },
+      {
+        "value": 54873,
+        "key": 3
+      },
+      {
+        "value": 54870,
+        "key": 19
+      },
+      {
+        "value": 54867,
+        "key": 2
+      },
+      {
+        "value": 54855,
+        "key": 7
+      },
+      {
+        "value": 54826,
+        "key": 15
+      },
+      {
+        "value": 54808,
+        "key": 6
+      },
+      {
+        "value": 54749,
+        "key": 8
+      },
+      {
+        "value": 54716,
+        "key": 18
+      },
+      {
+        "value": 54693,
+        "key": 13
+      },
+      {
+        "value": 54679,
+        "key": 9
+      },
+      {
+        "value": 54653,
+        "key": 10
+      },
+      {
+        "value": 54609,
+        "key": 14
+      },
+      {
+        "value": 54464,
+        "key": 11
+      },
+      {
+        "value": 54462,
+        "key": 16
+      }
+    ],
+    "messagesPerSecondSample": {
+      "Mon Nov 24 05:19:10 UTC 2025": 31,
+      "Mon Nov 24 05:19:11 UTC 2025": 1391,
+      "Mon Nov 24 05:19:12 UTC 2025": 3057,
+      "Mon Nov 24 05:19:13 UTC 2025": 7786,
+      "Mon Nov 24 05:19:14 UTC 2025": 10631,
+      "Mon Nov 24 05:19:15 UTC 2025": 11499,
+      "Mon Nov 24 05:19:16 UTC 2025": 11280,
+      "Mon Nov 24 05:19:17 UTC 2025": 7201,
+      "Mon Nov 24 05:19:18 UTC 2025": 7523,
+      "Mon Nov 24 05:19:19 UTC 2025": 2550
+    },
+    "totalTimeWindows": 493
+  },
+  "coreQueries": {
+    "query1_roomMessages": {
+      "messageCount": 1000,
+      "sampleMessages": [
+        {
+          "messageId": "0715b35c-016b-4811-95aa-1ea2450a9982-DELIVERY_ACK",
+          "userId": "22294",
+          "username": "user22294",
+          "message": "DELIVERY_ACK:0715b35c-016b-4811-95aa-1ea2450a9982",
+          "timestamp": "1763962189645",
+          "messageType": "ACK"
+        },
+        {
+          "messageId": "adbf66ae-a93f-4dec-8091-e2de5485201a-DELIVERY_ACK",
+          "userId": "19774",
+          "username": "user19774",
+          "message": "DELIVERY_ACK:adbf66ae-a93f-4dec-8091-e2de5485201a",
+          "timestamp": "1763962189644",
+          "messageType": "ACK"
+        },
+        {
+          "messageId": "6e79b193-2280-464c-8f87-ba3069dcc7b7-DELIVERY_ACK",
+          "userId": "4448",
+          "username": "user4448",
+          "message": "DELIVERY_ACK:6e79b193-2280-464c-8f87-ba3069dcc7b7",
+          "timestamp": "1763962189643",
+          "messageType": "ACK"
+        }
+      ],
+      "durationMs": 30,
+      "roomId": 1,
+      "targetMs": 100,
+      "status": "PASS"
+    },
+    "query2_userHistory": {
+      "messageCount": 50,
+      "userId": "22294",
+      "durationMs": 5,
+      "targetMs": 200,
+      "status": "PASS"
+    },
+    "query3_activeUsers": {
+      "uniqueUsers": 25000,
+      "durationMs": 24263,
+      "targetMs": 500,
+      "status": "FAIL"
+    },
+    "query4_userRooms": {
+      "roomCount": 16,
+      "rooms": {
+        "1": 1763962189645,
+        "2": 1763961867586,
+        "4": 1763962064801,
+        "5": 1763961557564,
+        "6": 1763961935308,
+        "7": 1763962023884,
+        "8": 1763961992180,
+        "10": 1763962164951,
+        "11": 1763962152554,
+        "12": 1763962035106,
+        "13": 1763962170332,
+        "14": 1763962106161,
+        "15": 1763961980210,
+        "16": 1763961949796,
+        "17": 1763962116166,
+        "19": 1763961760551
+      },
+      "userId": "22294",
+      "durationMs": 5,
+      "targetMs": 50,
+      "status": "PASS"
+    }
+  },
+  "databaseMetrics": {
+    "totalWrites": 999925,
+    "totalReads": 18,
+    "failedWrites": 75,
+    "failedReads": 0,
+    "pendingWrites": 0,
+    "avgWriteLatencyMs": "502.92",
+    "avgReadLatencyMs": "3421.58",
+    "p95WriteLatencyMs": "1270.00",
+    "p99WriteLatencyMs": "5740.00"
+  },
+  "apiExecutionTimeMs": 52444,
+  "timestamp": "Mon Nov 24 05:30:26 UTC 2025"
+}

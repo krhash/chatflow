@@ -1,0 +1,223 @@
+{
+  "databaseType": "DynamoDB",
+  "analytics": {
+    "totalMessages": 0,
+    "topActiveUsers": [
+      {
+        "value": 49,
+        "key": "13996"
+      },
+      {
+        "value": 49,
+        "key": "26259"
+      },
+      {
+        "value": 48,
+        "key": "22749"
+      },
+      {
+        "value": 48,
+        "key": "4408"
+      },
+      {
+        "value": 48,
+        "key": "44584"
+      },
+      {
+        "value": 48,
+        "key": "29587"
+      },
+      {
+        "value": 48,
+        "key": "16997"
+      },
+      {
+        "value": 47,
+        "key": "28640"
+      },
+      {
+        "value": 47,
+        "key": "20518"
+      },
+      {
+        "value": 47,
+        "key": "2790"
+      }
+    ],
+    "topActiveRooms": [
+      {
+        "value": 53732,
+        "key": 8
+      },
+      {
+        "value": 53682,
+        "key": 4
+      },
+      {
+        "value": 53597,
+        "key": 19
+      },
+      {
+        "value": 53527,
+        "key": 16
+      },
+      {
+        "value": 53423,
+        "key": 20
+      },
+      {
+        "value": 53386,
+        "key": 14
+      },
+      {
+        "value": 53314,
+        "key": 7
+      },
+      {
+        "value": 53308,
+        "key": 5
+      },
+      {
+        "value": 53199,
+        "key": 3
+      },
+      {
+        "value": 53184,
+        "key": 18
+      },
+      {
+        "value": 53182,
+        "key": 15
+      },
+      {
+        "value": 53177,
+        "key": 12
+      },
+      {
+        "value": 53161,
+        "key": 10
+      },
+      {
+        "value": 53063,
+        "key": 17
+      },
+      {
+        "value": 52954,
+        "key": 13
+      },
+      {
+        "value": 52936,
+        "key": 11
+      },
+      {
+        "value": 52895,
+        "key": 2
+      },
+      {
+        "value": 52893,
+        "key": 1
+      },
+      {
+        "value": 52866,
+        "key": 6
+      },
+      {
+        "value": 52739,
+        "key": 9
+      }
+    ],
+    "messagesPerSecondSample": {
+      "Mon Nov 24 18:53:47 UTC 2025": 669,
+      "Mon Nov 24 18:53:48 UTC 2025": 3264,
+      "Mon Nov 24 18:53:49 UTC 2025": 3970,
+      "Mon Nov 24 18:53:50 UTC 2025": 4907,
+      "Mon Nov 24 18:53:51 UTC 2025": 8762,
+      "Mon Nov 24 18:53:52 UTC 2025": 9024,
+      "Mon Nov 24 18:53:53 UTC 2025": 19970,
+      "Mon Nov 24 18:53:54 UTC 2025": 8702,
+      "Mon Nov 24 18:53:55 UTC 2025": 8380,
+      "Mon Nov 24 18:53:56 UTC 2025": 4892
+    },
+    "totalTimeWindows": 551
+  },
+  "coreQueries": {
+    "query1_roomMessages": {
+      "messageCount": 1000,
+      "sampleMessages": [
+        {
+          "messageId": "de0426ae-53eb-43e0-af4d-f91349010ced",
+          "userId": "41255",
+          "username": "user41255",
+          "message": "Happy chatting",
+          "timestamp": "1764010977017",
+          "messageType": "TEXT"
+        },
+        {
+          "messageId": "1322ab94-20ce-4f90-b407-098dbd0f960f-DELIVERY_ACK",
+          "userId": "19711",
+          "username": "user19711",
+          "message": "DELIVERY_ACK:1322ab94-20ce-4f90-b407-098dbd0f960f",
+          "timestamp": "1764010977001",
+          "messageType": "ACK"
+        },
+        {
+          "messageId": "1559a0b8-3cb1-4ae7-8dac-b22f9b2f569d",
+          "userId": "17184",
+          "username": "user17184",
+          "message": "How\u0027s it going?",
+          "timestamp": "1764010976964",
+          "messageType": "TEXT"
+        }
+      ],
+      "durationMs": 57,
+      "roomId": 1,
+      "targetMs": 100,
+      "status": "PASS"
+    },
+    "query2_userHistory": {
+      "messageCount": 26,
+      "userId": "41255",
+      "durationMs": 5,
+      "targetMs": 200,
+      "status": "PASS"
+    },
+    "query3_activeUsers": {
+      "uniqueUsers": 50000,
+      "durationMs": 630,
+      "targetMs": 500,
+      "status": "FAIL"
+    },
+    "query4_userRooms": {
+      "roomCount": 10,
+      "rooms": {
+        "16": 1764010684482,
+        "1": 1764010977017,
+        "18": 1764010912506,
+        "2": 1764010829678,
+        "3": 1764010858320,
+        "20": 1764010925093,
+        "6": 1764010581445,
+        "13": 1764010717668,
+        "14": 1764010534425,
+        "15": 1764010530317
+      },
+      "userId": "41255",
+      "durationMs": 5,
+      "targetMs": 50,
+      "status": "PASS"
+    }
+  },
+  "databaseMetrics": {
+    "totalWrites": 1064218,
+    "totalReads": 18,
+    "failedWrites": 37329,
+    "failedReads": 0,
+    "pendingWrites": 0,
+    "avgWriteLatencyMs": "12.08",
+    "avgReadLatencyMs": "328.17",
+    "p95WriteLatencyMs": "17.00",
+    "p99WriteLatencyMs": "120.00"
+  },
+  "apiExecutionTimeMs": 31256,
+  "timestamp": "Mon Nov 24 19:05:42 UTC 2025"
+}
