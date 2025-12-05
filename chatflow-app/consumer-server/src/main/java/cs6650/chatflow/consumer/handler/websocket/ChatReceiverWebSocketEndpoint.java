@@ -2,7 +2,6 @@ package cs6650.chatflow.consumer.handler.websocket;
 
 import cs6650.chatflow.consumer.commons.Constants;
 import cs6650.chatflow.consumer.util.RoomManager;
-import cs6650.chatflow.consumer.MessageAcknowledgmentProcessor;
 import cs6650.chatflow.consumer.model.MessageAck;
 import com.google.gson.Gson;
 import org.slf4j.Logger;
