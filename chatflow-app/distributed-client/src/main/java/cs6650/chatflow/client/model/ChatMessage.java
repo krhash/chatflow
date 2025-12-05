@@ -2,7 +2,7 @@ package cs6650.chatflow.client.model;
 
 /**
  * Chat message model for the distributed client.
- * Adapted from client-part1 but designed for distributed architecture.
+ * Supports regular messages (JOIN, TEXT, LEAVE, ACK) and ACK confirmation messages from producer.
  */
 public class ChatMessage {
     private String messageId;
@@ -13,7 +13,13 @@ public class ChatMessage {
     private String messageType;
     private String roomId;
 
-    // Getters and setters
+    // ========== ACK Confirmation Fields ==========
+    private String originalMessageId;  // Original message ID in ACK confirmation
+    private String ackMessageId;       // ACK message ID in confirmation
+    private String serverTimestamp;    // Server processing timestamp
+    // =============================================
+
+    // Standard getters and setters
     public String getMessageId() { return messageId; }
     public void setMessageId(String messageId) { this.messageId = messageId; }
 
@@ -35,4 +41,13 @@ public class ChatMessage {
     public String getRoomId() { return roomId; }
     public void setRoomId(String roomId) { this.roomId = roomId; }
 
+    // ACK confirmation getters and setters
+    public String getOriginalMessageId() { return originalMessageId; }
+    public void setOriginalMessageId(String originalMessageId) { this.originalMessageId = originalMessageId; }
+
+    public String getAckMessageId() { return ackMessageId; }
+    public void setAckMessageId(String ackMessageId) { this.ackMessageId = ackMessageId; }
+
+    public String getServerTimestamp() { return serverTimestamp; }
+    public void setServerTimestamp(String serverTimestamp) { this.serverTimestamp = serverTimestamp; }
 }

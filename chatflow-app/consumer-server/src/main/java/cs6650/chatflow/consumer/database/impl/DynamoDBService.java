@@ -24,8 +24,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 /**
- * DynamoDB implementation of DatabaseService
- * Uses MessageBuffer for batching and thread pool management
+ * DynamoDB implementation with deduplication and DLQ support.
+ * Properly tracks duplicates separately from failures.
  */
 public class DynamoDBService implements DatabaseService {
     private static final Logger logger = LoggerFactory.getLogger(DynamoDBService.class);
@@ -40,10 +40,10 @@ public class DynamoDBService implements DatabaseService {
     private final String roomIndexName;
     private final String userIndexName;
 
-    // Batch Processing - Delegated to MessageBuffer
+    // Batch Processing
     private MessageBuffer messageBuffer;
 
-    // Metrics
+    // Read Metrics
     private final AtomicLong totalReads = new AtomicLong(0);
     private final AtomicLong failedReads = new AtomicLong(0);
     private final List<Long> readLatencies = new ArrayList<>();
@@ -58,13 +58,11 @@ public class DynamoDBService implements DatabaseService {
 
     @Override
     public void initialize() {
-        logger.info("Initializing DynamoDB service...");
+        logger.info("Initializing DynamoDB service with deduplication and DLQ...");
 
         try {
             // Validate configuration
             DatabaseConfig.validateConfiguration();
-
-            // Log configuration
             DatabaseConfig.logConfiguration();
 
             // Create DynamoDB client
@@ -81,7 +79,7 @@ public class DynamoDBService implements DatabaseService {
             logger.info("Connected to DynamoDB table: {} (status: {})",
                     tableName, tableDesc.getTableStatus());
 
-            // Create batch writer
+            // Create batch writer with deduplication support
             DynamoDBBatchWriter batchWriter = new DynamoDBBatchWriter(
                     dynamoDB,
                     tableName,
@@ -92,8 +90,7 @@ public class DynamoDBService implements DatabaseService {
             ThroughputTracker tracker = new ThroughputTracker();
             this.throughputTracker = tracker;
 
-
-            // Initialize message buffer with configuration
+            // Initialize message buffer with DLQ
             this.messageBuffer = new MessageBuffer(
                     DatabaseConfig.getBatchSize(),
                     DatabaseConfig.getFlushIntervalMs(),
@@ -105,10 +102,10 @@ public class DynamoDBService implements DatabaseService {
                     tracker
             );
 
-            // Start message buffer
+            // Start message buffer (also starts DLQ)
             messageBuffer.start();
 
-            logger.info("DynamoDB service initialized successfully");
+            logger.info("✅ DynamoDB service initialized with deduplication and DLQ");
 
         } catch (Exception e) {
             logger.error("Failed to initialize DynamoDB service", e);
@@ -121,7 +118,7 @@ public class DynamoDBService implements DatabaseService {
         logger.info("Shutting down DynamoDB service...");
 
         try {
-            // Stop message buffer (flushes pending writes)
+            // Stop message buffer (flushes pending writes and processes DLQ)
             if (messageBuffer != null) {
                 messageBuffer.stop();
             }
@@ -146,7 +143,7 @@ public class DynamoDBService implements DatabaseService {
                 return false;
             }
 
-            // Quick health check - describe table
+            // Quick health check
             table.describe();
 
             // Check buffer health
@@ -154,6 +151,12 @@ public class DynamoDBService implements DatabaseService {
             if (queueSize > DatabaseConfig.getMaxQueueSize() * 0.9) {
                 logger.warn("Message queue nearly full: {}/{}",
                         queueSize, DatabaseConfig.getMaxQueueSize());
+            }
+
+            // Check DLQ health
+            int dlqSize = messageBuffer.getDLQSize();
+            if (dlqSize > 100) {
+                logger.warn("DLQ growing large: {} messages", dlqSize);
             }
 
             return true;
@@ -168,14 +171,12 @@ public class DynamoDBService implements DatabaseService {
     @Override
     public void writeMessage(ChatEvent event, String roomId) {
         try {
-            // Convert ChatEvent to DatabaseMessage
             DatabaseMessage dbMessage = DatabaseMessage.fromChatEvent(event, roomId);
 
-            // Add to buffer (non-blocking)
             boolean added = messageBuffer.add(dbMessage);
 
             if (!added) {
-                logger.debug("Failed to add message to buffer: {}", event.getMessageId());
+                logger.debug("Message added to DLQ: {}", event.getMessageId());
             }
 
         } catch (Exception e) {
@@ -198,7 +199,7 @@ public class DynamoDBService implements DatabaseService {
         return messageBuffer.flush();
     }
 
-    // ========== Core Query Operations ==========
+    // ========== Query Operations (unchanged) ==========
 
     @Override
     public List<ChatEvent> getMessagesInTimeRange(int roomId, long startTime, long endTime) {
@@ -212,7 +213,7 @@ public class DynamoDBService implements DatabaseService {
                     .withRangeKeyCondition(
                             new RangeKeyCondition("timestamp").between(startTime, endTime)
                     )
-                    .withScanIndexForward(false) // Descending order
+                    .withScanIndexForward(false)
                     .withMaxResultSize(1000);
 
             ItemCollection<QueryOutcome> items = index.query(spec);
@@ -226,13 +227,13 @@ public class DynamoDBService implements DatabaseService {
             recordReadLatency(duration);
             totalReads.incrementAndGet();
 
-            logger.debug("Query 1: Retrieved {} messages for room {} in {}ms",
+            logger.debug("Query: Retrieved {} messages for room {} in {}ms",
                     messages.size(), roomId, duration);
 
             return messages;
 
         } catch (Exception e) {
-            logger.error("Query 1 failed for room {}", roomId, e);
+            logger.error("Query failed for room {}", roomId, e);
             failedReads.incrementAndGet();
             return Collections.emptyList();
         }
@@ -263,13 +264,10 @@ public class DynamoDBService implements DatabaseService {
             recordReadLatency(duration);
             totalReads.incrementAndGet();
 
-            logger.debug("Query 2: Retrieved {} messages for user {} in {}ms",
-                    messages.size(), userId, duration);
-
             return messages;
 
         } catch (Exception e) {
-            logger.error("Query 2 failed for user {}", userId, e);
+            logger.error("Query failed for user {}", userId, e);
             failedReads.incrementAndGet();
             return Collections.emptyList();
         }
@@ -280,7 +278,6 @@ public class DynamoDBService implements DatabaseService {
         long queryStart = System.currentTimeMillis();
 
         try {
-            // Parallel scan for better performance on large datasets
             int totalSegments = 8;
             Set<String> uniqueUsers = ConcurrentHashMap.newKeySet();
             ExecutorService scanExecutor = Executors.newFixedThreadPool(totalSegments);
@@ -315,7 +312,6 @@ public class DynamoDBService implements DatabaseService {
                 futures.add(future);
             }
 
-            // Wait for all segments
             for (Future<?> future : futures) {
                 try {
                     future.get();
@@ -331,12 +327,10 @@ public class DynamoDBService implements DatabaseService {
             recordReadLatency(duration);
             totalReads.incrementAndGet();
 
-            logger.info("Query 3: Counted {} active users in {}ms (parallel scan)", count, duration);
-
             return count;
 
         } catch (Exception e) {
-            logger.error("Query 3 failed", e);
+            logger.error("Count query failed", e);
             failedReads.incrementAndGet();
             return 0;
         }
@@ -360,8 +354,6 @@ public class DynamoDBService implements DatabaseService {
             for (Item item : items) {
                 int roomId = item.getInt("room_id");
                 long timestamp = item.getLong("timestamp");
-
-                // Keep the latest timestamp for each room
                 roomActivity.merge(roomId, timestamp, Math::max);
             }
 
@@ -369,19 +361,14 @@ public class DynamoDBService implements DatabaseService {
             recordReadLatency(duration);
             totalReads.incrementAndGet();
 
-            logger.debug("Query 4: Found {} rooms for user {} in {}ms",
-                    roomActivity.size(), userId, duration);
-
             return roomActivity;
 
         } catch (Exception e) {
-            logger.error("Query 4 failed for user {}", userId, e);
+            logger.error("Query failed for user {}", userId, e);
             failedReads.incrementAndGet();
             return Collections.emptyMap();
         }
     }
-
-    // ========== Analytics Operations ==========
 
     @Override
     public Map<String, Long> getMessageDistribution(long startTime, long endTime, String granularity) {
@@ -405,7 +392,6 @@ public class DynamoDBService implements DatabaseService {
                 distribution.merge(bucket, 1L, Long::sum);
             }
 
-            // Convert to readable format
             Map<String, Long> result = new TreeMap<>();
             distribution.forEach((bucket, count) -> {
                 result.put(new Date(bucket).toString(), count);
@@ -415,7 +401,7 @@ public class DynamoDBService implements DatabaseService {
             return result;
 
         } catch (Exception e) {
-            logger.error("Message distribution query failed", e);
+            logger.error("Distribution query failed", e);
             failedReads.incrementAndGet();
             return Collections.emptyMap();
         }
@@ -441,8 +427,6 @@ public class DynamoDBService implements DatabaseService {
                     .collect(Collectors.toList());
 
             totalReads.incrementAndGet();
-            logger.debug("Top {} users retrieved", limit);
-
             return topUsers;
 
         } catch (Exception e) {
@@ -472,8 +456,6 @@ public class DynamoDBService implements DatabaseService {
                     .collect(Collectors.toList());
 
             totalReads.incrementAndGet();
-            logger.debug("Top {} rooms retrieved", limit);
-
             return topRooms;
 
         } catch (Exception e) {
@@ -491,14 +473,12 @@ public class DynamoDBService implements DatabaseService {
             Map<String, Object> pattern = new HashMap<>();
             pattern.put("totalMessages", userMessages.size());
 
-            // Room distribution
             Map<Integer, Long> roomCounts = new HashMap<>();
             for (ChatEvent event : userMessages) {
-                roomCounts.merge(1, 1L, Long::sum); // Simplified
+                roomCounts.merge(1, 1L, Long::sum);
             }
             pattern.put("roomDistribution", roomCounts);
 
-            // Message type distribution
             Map<String, Long> typeCounts = userMessages.stream()
                     .collect(Collectors.groupingBy(
                             ChatEvent::getMessageType,
@@ -506,7 +486,6 @@ public class DynamoDBService implements DatabaseService {
                     ));
             pattern.put("messageTypeDistribution", typeCounts);
 
-            // Activity timeline
             if (!userMessages.isEmpty()) {
                 String firstTs = userMessages.get(userMessages.size() - 1).getTimestamp();
                 String lastTs = userMessages.get(0).getTimestamp();
@@ -517,12 +496,10 @@ public class DynamoDBService implements DatabaseService {
             return pattern;
 
         } catch (Exception e) {
-            logger.error("User participation pattern query failed", e);
+            logger.error("Participation pattern query failed", e);
             return Collections.emptyMap();
         }
     }
-
-    // ========== Utility Operations ==========
 
     @Override
     public long getTotalMessageCount() {
@@ -544,7 +521,6 @@ public class DynamoDBService implements DatabaseService {
             metrics.setFailedWrites(messageBuffer.getFailedWrites());
             metrics.setPendingWrites(messageBuffer.getQueueSize());
 
-            // Calculate write latency statistics
             List<Long> latencies = messageBuffer.getWriteLatencies();
             if (!latencies.isEmpty()) {
                 metrics.setAvgWriteLatencyMs(calculateAverage(latencies));
@@ -556,7 +532,6 @@ public class DynamoDBService implements DatabaseService {
         metrics.setTotalReads(totalReads.get());
         metrics.setFailedReads(failedReads.get());
 
-        // Calculate read latency statistics
         synchronized (readLatencies) {
             if (!readLatencies.isEmpty()) {
                 metrics.setAvgReadLatencyMs(calculateAverage(readLatencies));
@@ -586,8 +561,6 @@ public class DynamoDBService implements DatabaseService {
 
     private synchronized void recordReadLatency(long latencyMs) {
         readLatencies.add(latencyMs);
-
-        // Keep only last 1000 measurements
         if (readLatencies.size() > 1000) {
             readLatencies.remove(0);
         }
@@ -599,10 +572,8 @@ public class DynamoDBService implements DatabaseService {
 
     private double calculatePercentile(List<Long> values, double percentile) {
         if (values.isEmpty()) return 0.0;
-
         List<Long> sorted = new ArrayList<>(values);
         Collections.sort(sorted);
-
         int index = (int) Math.ceil(percentile * sorted.size()) - 1;
         return sorted.get(Math.max(0, index));
     }

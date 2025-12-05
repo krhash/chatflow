@@ -6,107 +6,166 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
-import org.java_websocket.client.WebSocketClient;
-import org.java_websocket.handshake.ServerHandshake;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Simple connection pool for managing WebSocket connections to the consumer server.
- * Each connection is dedicated to a specific room and receives messages for that room.
- * Similar to WebSocketConnectionPool but for consumer server connections (receiving messages).
+ * High-throughput connection pool for managing WebSocket connections to the consumer server.
+ * Supports multiple connections per room (default 5) for parallel message receiving.
+ *
+ * Architecture:
+ * - 20 rooms × 5 connections per room = 100 total connections
+ * - Each connection has multiple listeners (receiver threads)
+ * - Non-blocking message dispatch to listeners
+ *
+ * This pool is read-only - connections only receive messages, never send.
  */
 public class ReceiverConnectionPool {
 
     private static final Logger logger = LoggerFactory.getLogger(ReceiverConnectionPool.class);
 
-    private final Map<String, SimpleConsumerWebSocketClient> roomConnections = new ConcurrentHashMap<>();
+    private final Map<String, List<ConsumerWebSocketClient>> roomConnections = new ConcurrentHashMap<>();
     private final Map<String, CopyOnWriteArrayList<Consumer<ChatMessage>>> messageListeners = new ConcurrentHashMap<>();
     private final Gson gson = new GsonBuilder().create();
     private final String serverHost;
     private final int serverPort;
     private final String serverPath;
+    private final int connectionsPerRoom;
 
     /**
-     * Creates a connection pool with connections for all rooms.
-     * Uses default configuration from Constants.
+     * Creates a connection pool with default 1 connection per room (backward compatible).
      */
     public ReceiverConnectionPool() {
-        this(Constants.CONSUMER_SERVER_HOST, Constants.CONSUMER_SERVER_PORT, Constants.CONSUMER_SERVER_PATH);
+        this(Constants.CONSUMER_SERVER_HOST, Constants.CONSUMER_SERVER_PORT,
+                Constants.CONSUMER_SERVER_PATH, 1);
     }
 
     /**
-     * Creates a connection pool with connections for all rooms using specified server configuration.
+     * Creates a connection pool using specified server configuration.
+     *
      * @param serverHost The consumer server hostname
      * @param serverPort The consumer server port
      * @param serverPath The consumer server context path
      */
     public ReceiverConnectionPool(String serverHost, int serverPort, String serverPath) {
+        this(serverHost, serverPort, serverPath, 1);
+    }
+
+    /**
+     * Creates a connection pool with multiple connections per room.
+     *
+     * @param serverHost The consumer server hostname
+     * @param serverPort The consumer server port
+     * @param serverPath The consumer server context path
+     * @param connectionsPerRoom Number of connections per room (e.g., 5 for 100 total connections)
+     */
+    public ReceiverConnectionPool(String serverHost, int serverPort, String serverPath, int connectionsPerRoom) {
         this.serverHost = serverHost;
         this.serverPort = serverPort;
         this.serverPath = serverPath;
+        this.connectionsPerRoom = connectionsPerRoom;
 
-        // Initialize 20 connections for rooms 1-20
+        // Initialize multiple connections for each room (room1-room20)
         for (int roomId = 1; roomId <= 20; roomId++) {
-            initializeConnection("room" + roomId);
+            String roomIdStr = "room" + roomId;
+            initializeConnectionsForRoom(roomIdStr);
         }
     }
 
     /**
-     * Initialize a WebSocket connection for the specified room.
+     * Initialize multiple WebSocket connections for the specified room.
      */
-    private void initializeConnection(String roomId) {
-        try {
-            // Connect to consumer server for this specific room
-            String wsUri = "ws://" + serverHost + ":" + serverPort + serverPath + roomId;
-            URI uri = URI.create(wsUri);
+    private void initializeConnectionsForRoom(String roomId) {
+        List<ConsumerWebSocketClient> connections = new CopyOnWriteArrayList<>();
 
-            SimpleConsumerWebSocketClient client = new SimpleConsumerWebSocketClient(uri, roomId);
-            boolean connected = client.connectBlocking(10, java.util.concurrent.TimeUnit.SECONDS);
+        for (int i = 0; i < connectionsPerRoom; i++) {
+            try {
+                String wsUri = "ws://" + serverHost + ":" + serverPort + serverPath + roomId;
+                URI uri = URI.create(wsUri);
 
-            if (connected && client.isOpen()) {
-                roomConnections.put(roomId, client);
-                messageListeners.put(roomId, new CopyOnWriteArrayList<>());
-                System.out.println("Consumer connection established for " + roomId);
-            } else {
-                System.err.println("Failed to establish consumer connection for " + roomId);
+                // Create client with message handler callback
+                ConsumerWebSocketClient client = new ConsumerWebSocketClient(
+                        uri,
+                        roomId,
+                        this::handleMessage  // Pass handleMessage as callback
+                );
+
+                boolean connected = client.connectBlocking(10, java.util.concurrent.TimeUnit.SECONDS);
+
+                if (connected && client.isOpen()) {
+                    connections.add(client);
+                    logger.info("Consumer connection {} established for {} (total: {})",
+                            i + 1, roomId, connections.size());
+                } else {
+                    logger.error("Failed to establish consumer connection {} for {}", i + 1, roomId);
+                }
+
+            } catch (Exception e) {
+                logger.error("Error initializing consumer connection for {}: {}", roomId, e.getMessage());
             }
-
-        } catch (Exception e) {
-            System.err.println("Error initializing consumer connection for " + roomId + ": " + e.getMessage());
         }
+
+        roomConnections.put(roomId, connections);
+        messageListeners.put(roomId, new CopyOnWriteArrayList<>());
+
+        logger.info("Initialized {} consumer connections for room {}", connections.size(), roomId);
     }
 
     /**
-     * Gets the WebSocket connection for the specified room ID.
+     * Gets all WebSocket connections for the specified room.
+     *
      * @param roomId room ID (e.g., "room1", "room2", ..., "room20")
-     * @return WebSocket client for the room, or null if connection not available
+     * @return List of WebSocket clients for the room
      */
-    public SimpleConsumerWebSocketClient getConnection(String roomId) {
-        SimpleConsumerWebSocketClient client = roomConnections.get(roomId);
-        if (client == null || !client.isOpen()) {
-            logger.warn("Consumer connection for room {} is not available or closed", roomId);
+    public List<ConsumerWebSocketClient> getConnections(String roomId) {
+        return roomConnections.get(roomId);
+    }
+
+    /**
+     * Gets the first available connection for the specified room (backward compatibility).
+     *
+     * @param roomId room ID
+     * @return First WebSocket client for the room, or null if not available
+     */
+    public ConsumerWebSocketClient getConnection(String roomId) {
+        List<ConsumerWebSocketClient> connections = roomConnections.get(roomId);
+        if (connections == null || connections.isEmpty()) {
+            logger.warn("Consumer connection for room {} is not available", roomId);
             return null;
         }
-        return client;
+
+        // Return first open connection
+        for (ConsumerWebSocketClient client : connections) {
+            if (client != null && client.isOpen()) {
+                return client;
+            }
+        }
+
+        logger.warn("No open consumer connections for room {}", roomId);
+        return null;
     }
 
     /**
      * Register a message listener for a specific room.
+     * The listener will be called for ALL connections in that room.
+     *
      * @param roomId room ID (e.g., "room1")
      * @param listener callback function to handle messages
      */
     public void addMessageListener(String roomId, Consumer<ChatMessage> listener) {
         messageListeners.computeIfAbsent(roomId, k -> new CopyOnWriteArrayList<>()).add(listener);
-        logger.debug("Added message listener for room {}", roomId);
+        logger.debug("Added message listener for room {} (total listeners: {})",
+                roomId, messageListeners.get(roomId).size());
     }
 
     /**
      * Remove a message listener for a specific room.
+     *
      * @param roomId room ID (e.g., "room1")
      * @param listener callback function to remove
      */
@@ -114,17 +173,25 @@ public class ReceiverConnectionPool {
         CopyOnWriteArrayList<Consumer<ChatMessage>> listeners = messageListeners.get(roomId);
         if (listeners != null) {
             listeners.remove(listener);
-            logger.debug("Removed message listener for room {}", roomId);
+            logger.debug("Removed message listener for room {} (remaining listeners: {})",
+                    roomId, listeners.size());
         }
     }
 
     /**
-     * Get the number of active connections.
-     * @return count of open connections
+     * Get the number of active connections for a specific room.
+     *
+     * @param roomId room ID
+     * @return number of open connections for the room
      */
-    public int getActiveConnectionCount() {
+    public int getActiveConnectionCount(String roomId) {
+        List<ConsumerWebSocketClient> connections = roomConnections.get(roomId);
+        if (connections == null) {
+            return 0;
+        }
+
         int count = 0;
-        for (SimpleConsumerWebSocketClient client : roomConnections.values()) {
+        for (ConsumerWebSocketClient client : connections) {
             if (client != null && client.isOpen()) {
                 count++;
             }
@@ -133,7 +200,24 @@ public class ReceiverConnectionPool {
     }
 
     /**
+     * Get the total number of active connections across all rooms.
+     *
+     * @return total count of open connections
+     */
+    public int getTotalActiveConnectionCount() {
+        int totalCount = 0;
+        for (String roomId : roomConnections.keySet()) {
+            totalCount += getActiveConnectionCount(roomId);
+        }
+        return totalCount;
+    }
+
+    /**
      * Handle incoming messages from consumer server and notify listeners.
+     * This is called by each ConsumerWebSocketClient's onMessage handler via callback.
+     *
+     * @param messageJson JSON string of the message
+     * @param roomId room ID the message was received on
      */
     private void handleMessage(String messageJson, String roomId) {
         try {
@@ -161,6 +245,9 @@ public class ReceiverConnectionPool {
 
     /**
      * Parse incoming JSON message to ChatMessage object.
+     *
+     * @param messageJson JSON string
+     * @return ChatMessage object, or null if parsing fails
      */
     private ChatMessage parseChatMessage(String messageJson) {
         try {
@@ -176,46 +263,17 @@ public class ReceiverConnectionPool {
      * Closes all connections in the pool.
      */
     public void closeAll() {
-        for (SimpleConsumerWebSocketClient client : roomConnections.values()) {
-            if (client != null) {
-                client.close();
+        int totalClosed = 0;
+        for (List<ConsumerWebSocketClient> connections : roomConnections.values()) {
+            for (ConsumerWebSocketClient client : connections) {
+                if (client != null) {
+                    client.close();
+                    totalClosed++;
+                }
             }
         }
         roomConnections.clear();
         messageListeners.clear();
-        System.out.println("All consumer connections closed");
-    }
-
-    /**
-     * Simple WebSocket client for consumer server connections (receiving messages).
-     */
-    public class SimpleConsumerWebSocketClient extends WebSocketClient {
-
-        private final String roomId;
-
-        public SimpleConsumerWebSocketClient(URI serverUri, String roomId) {
-            super(serverUri);
-            this.roomId = roomId;
-        }
-
-        @Override
-        public void onOpen(ServerHandshake handshakedata) {
-            logger.info("Consumer connection for room {} opened", roomId);
-        }
-
-        @Override
-        public void onMessage(String message) {
-            handleMessage(message, roomId);
-        }
-
-        @Override
-        public void onClose(int code, String reason, boolean remote) {
-            logger.info("Consumer connection for room {} closed: {}", roomId, reason);
-        }
-
-        @Override
-        public void onError(Exception ex) {
-            logger.error("Consumer connection for room {} error: {}", roomId, ex.getMessage(), ex);
-        }
+        logger.info("Closed {} consumer connections", totalClosed);
     }
 }

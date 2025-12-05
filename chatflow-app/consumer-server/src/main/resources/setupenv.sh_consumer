@@ -1,0 +1,138 @@
+#!/bin/bash
+
+# ==========================================
+# Consumer Server Configuration Loader
+# Loads: RabbitMQ, Database, AWS Credentials
+# ==========================================
+
+CONFIG_DIR="/home/ec2-user"
+
+echo "========================================="
+echo "Consumer Server - Configuration Loader"
+echo "========================================="
+
+# ==========================================
+# Function: Load properties file
+# ==========================================
+load_properties() {
+    local file=$1
+
+    if [ -f "$file" ]; then
+        echo "Loading: $file"
+
+        while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            [[ "$key" =~ ^#.*$ ]] && continue
+            [[ -z "$key" ]] && continue
+
+            # Trim whitespace
+            key=$(echo "$key" | xargs)
+            value=$(echo "$value" | xargs)
+
+            # Convert to environment variable
+            env_key=$(echo "$key" | tr '.' '_' | tr '[:lower:]' '[:upper:]')
+            export "$env_key=$value"
+
+        done < "$file"
+
+        echo "  ✅ Loaded"
+        return 0
+    else
+        echo "  ❌ Not found: $file"
+        return 1
+    fi
+}
+
+# ==========================================
+# Load RabbitMQ Configuration
+# ==========================================
+echo ""
+echo "1. RabbitMQ Configuration:"
+load_properties "$CONFIG_DIR/rabbitmq.properties"
+export CATALINA_OPTS="$CATALINA_OPTS -Drabbitmq.config.path=$CONFIG_DIR/rabbitmq.properties"
+
+# ==========================================
+# Load Database Configuration
+# ==========================================
+echo ""
+echo "2. Database Configuration:"
+load_properties "$CONFIG_DIR/database.properties"
+export CATALINA_OPTS="$CATALINA_OPTS -Ddatabase.config.path=$CONFIG_DIR/database.properties"
+
+# ==========================================
+# Load AWS Credentials
+# ==========================================
+echo ""
+echo "3. AWS Credentials:"
+if [ -f "$CONFIG_DIR/aws-credentials.properties" ]; then
+    echo "Loading: $CONFIG_DIR/aws-credentials.properties"
+
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^#.*$ ]] && continue
+        [[ -z "$key" ]] && continue
+
+        key=$(echo "$key" | xargs)
+        value=$(echo "$value" | xargs)
+
+        # Map to standard AWS environment variables
+        case "$key" in
+            aws.accessKeyId)
+                export AWS_ACCESS_KEY_ID="$value"
+                ;;
+            aws.secretKey)
+                export AWS_SECRET_ACCESS_KEY="$value"
+                ;;
+            aws.sessionToken)
+                export AWS_SESSION_TOKEN="$value"
+                ;;
+            aws.region)
+                export AWS_REGION="$value"
+                export AWS_DEFAULT_REGION="$value"
+                ;;
+        esac
+
+    done < "$CONFIG_DIR/aws-credentials.properties"
+
+    echo "  ✅ AWS credentials loaded"
+else
+    echo "  ⚠️  AWS credentials not found, checking ~/.aws/credentials..."
+    if [ -f "$HOME/.aws/credentials" ]; then
+        echo "  ✅ Using ~/.aws/credentials"
+    else
+        echo "  ❌ No AWS credentials found!"
+    fi
+fi
+
+# ==========================================
+# JVM Configuration
+# Consumer needs more memory than producer
+# ==========================================
+export CATALINA_OPTS="$CATALINA_OPTS -Xms512m -Xmx2048m"
+export CATALINA_OPTS="$CATALINA_OPTS -XX:+UseG1GC"
+export CATALINA_OPTS="$CATALINA_OPTS -XX:MaxGCPauseMillis=200"
+
+# ==========================================
+# Summary
+# ==========================================
+echo ""
+echo "========================================="
+echo "Configuration Summary:"
+echo "========================================="
+echo "RabbitMQ: ${RABBITMQ_HOST}:${RABBITMQ_PORT}"
+echo "Database: ${DATABASE_TYPE}"
+echo "AWS Region: ${AWS_REGION}"
+
+if [ -n "$AWS_ACCESS_KEY_ID" ]; then
+    echo "AWS Key ID: ${AWS_ACCESS_KEY_ID:0:15}***"
+else
+    echo "AWS Key ID: NOT SET"
+fi
+
+if [ -n "$AWS_SESSION_TOKEN" ]; then
+    echo "Session Token: ${AWS_SESSION_TOKEN:0:20}***"
+else
+    echo "Session Token: NOT SET"
+fi
+
+echo "JVM Heap: 512m-2048m"
+echo "========================================="

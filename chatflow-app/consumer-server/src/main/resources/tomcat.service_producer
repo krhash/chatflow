@@ -1,0 +1,31 @@
+[Unit]
+Description=Apache Tomcat 9 Web Application Server - Producer
+After=network.target
+
+[Service]
+Type=forking
+
+# User and Group
+User=ec2-user
+Group=ec2-user
+
+# ========== THESE ARE CRITICAL - REQUIRED FOR setenv.sh ==========
+Environment="CATALINA_HOME=/opt/tomcat9"
+Environment="CATALINA_BASE=/opt/tomcat9"
+Environment="CATALINA_PID=/opt/tomcat9/temp/tomcat.pid"
+Environment="CATALINA_TMPDIR=/opt/tomcat9/temp"
+# ================================================================
+
+# Tomcat Scripts
+ExecStart=/opt/tomcat9/bin/startup.sh
+ExecStop=/opt/tomcat9/bin/shutdown.sh
+
+# Restart Policy
+RestartSec=10
+Restart=always
+
+# Working Directory
+WorkingDirectory=/opt/tomcat9
+
+[Install]
+WantedBy=multi-user.target

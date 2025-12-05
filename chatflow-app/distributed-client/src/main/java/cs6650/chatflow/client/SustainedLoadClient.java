@@ -2,8 +2,8 @@ package cs6650.chatflow.client;
 
 import cs6650.chatflow.client.commons.Constants;
 import cs6650.chatflow.client.connection.ProducerConnectionPool;
+import cs6650.chatflow.client.connection.ProducerWebSocketClient;
 import cs6650.chatflow.client.connection.ReceiverConnectionPool;
-import cs6650.chatflow.client.connection.SimpleWebSocketClient;
 import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,8 +14,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Sustained Load Test Client
- * Sends messages at a controlled, sustained rate to test system endurance
- * Uses existing connection pool infrastructure from DistributedClient
+ * Sends messages at a controlled, sustained rate to test system endurance.
+ * This client focuses on message sending only - it does not implement
+ * the full receive/ACK cycle like DistributedClient.
  */
 public class SustainedLoadClient {
     private static final Logger logger = LoggerFactory.getLogger(SustainedLoadClient.class);
@@ -30,7 +31,7 @@ public class SustainedLoadClient {
     private final int consumerPort;
     private final int totalRooms;
 
-    // Connection Pools (reuse from DistributedClient)
+    // Connection Pools
     private ProducerConnectionPool producerConnectionPool;
     private ReceiverConnectionPool consumerConnectionPool;
 
@@ -129,19 +130,24 @@ public class SustainedLoadClient {
     private void initializeConnections() {
         System.out.println("Initializing connection pools...");
 
-        // Producer connection pool
+        // ========== UPDATED: Use new constructor with null ACK handler ==========
+        // SustainedLoadClient doesn't handle ACK confirmations, so pass null
         producerConnectionPool = new ProducerConnectionPool(
                 producerHost,
                 producerPort,
-                Constants.PRODUCER_SERVER_PATH
+                Constants.PRODUCER_SERVER_PATH,
+                null  // No ACK confirmation handler for sustained load test
         );
+        // ========================================================================
+
         System.out.println("✅ Producer connection pool initialized");
 
-        // Consumer connection pool
+        // Consumer connection pool (for completeness, though not used in this test)
         consumerConnectionPool = new ReceiverConnectionPool(
                 consumerHost,
                 consumerPort,
-                Constants.CONSUMER_SERVER_PATH
+                Constants.CONSUMER_SERVER_PATH,
+                2  // 2 connections per room
         );
         System.out.println("✅ Consumer connection pool initialized");
 
@@ -313,7 +319,7 @@ public class SustainedLoadClient {
      */
     private void sendMessage(ChatMessage message, String roomId) {
         try {
-            SimpleWebSocketClient connection = producerConnectionPool.getConnection(roomId);
+            ProducerWebSocketClient connection = producerConnectionPool.getConnection(roomId);
 
             if (connection != null && connection.isOpen()) {
                 String json = gson.toJson(message);

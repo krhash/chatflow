@@ -11,8 +11,8 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Buffer for batching database writes.
- * Manages queue, thread pool, and flush triggers.
+ * Buffer for batching database writes with Dead Letter Queue support.
+ * Manages queue, thread pool, flush triggers, and tracks duplicates separately from failures.
  */
 public class MessageBuffer {
     private static final Logger logger = LoggerFactory.getLogger(MessageBuffer.class);
@@ -28,11 +28,13 @@ public class MessageBuffer {
     private final ScheduledExecutorService flushScheduler;
     private final RejectedMessageHandler rejectionHandler;
 
-    // Writer
+    // Writer and DLQ
     private final DatabaseBatchWriter batchWriter;
+    private final DeadLetterQueue deadLetterQueue;
 
-    // Metrics
+    // Metrics (now tracking duplicates separately)
     private final AtomicLong totalWrites = new AtomicLong(0);
+    private final AtomicLong totalDuplicates = new AtomicLong(0);
     private final AtomicLong failedWrites = new AtomicLong(0);
     private final List<Long> writeLatencies = new CopyOnWriteArrayList<>();
 
@@ -52,23 +54,31 @@ public class MessageBuffer {
 
         this.batchSize = batchSize;
         this.flushIntervalMs = flushIntervalMs;
-        this.taskQueueSize = taskQueueSize;  // ← STORE IT
+        this.taskQueueSize = taskQueueSize;
         this.batchWriter = batchWriter;
+        this.throughputTracker = throughputTracker;
 
         // Create bounded queue
         this.messageQueue = new LinkedBlockingQueue<>(maxQueueSize);
-        this.throughputTracker = throughputTracker;
+
+        // Create Dead Letter Queue
+        this.deadLetterQueue = new DeadLetterQueue(
+                batchWriter,
+                maxQueueSize / 10,  // DLQ size = 10% of main queue
+                5,                   // Max 5 retry attempts
+                2000                 // Start with 2 second retry delay
+        );
 
         // Create rejection handler
         this.rejectionHandler = new RejectedMessageHandler(5000);
 
-        // Create thread pool with CONFIGURABLE task queue size
+        // Create thread pool
         this.writerThreadPool = new ThreadPoolExecutor(
                 corePoolSize,
                 maxPoolSize,
                 60L,
                 TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(taskQueueSize),  // ← USE PARAMETER, NOT HARDCODED 100!
+                new LinkedBlockingQueue<>(taskQueueSize),
                 new ThreadFactory() {
                     private final AtomicLong threadCounter = new AtomicLong(0);
                     @Override
@@ -89,12 +99,12 @@ public class MessageBuffer {
         });
 
         logger.info("MessageBuffer initialized: batchSize={}, flushInterval={}ms, " +
-                        "messageQueueSize={}, taskQueueSize={}, coreThreads={}, maxThreads={}",
+                        "messageQueueSize={}, taskQueueSize={}, coreThreads={}, maxThreads={}, DLQ enabled",
                 batchSize, flushIntervalMs, maxQueueSize, taskQueueSize, corePoolSize, maxPoolSize);
     }
 
     /**
-     * Start the buffer (begin processing)
+     * Start the buffer and DLQ
      */
     public void start() {
         if (running) {
@@ -103,6 +113,9 @@ public class MessageBuffer {
         }
 
         running = true;
+
+        // Start DLQ processor
+        deadLetterQueue.start();
 
         // Start time-based flush
         flushScheduler.scheduleAtFixedRate(
@@ -115,7 +128,7 @@ public class MessageBuffer {
         // Start size-based monitoring
         writerThreadPool.execute(this::monitorQueueSize);
 
-        logger.info("MessageBuffer started");
+        logger.info("MessageBuffer and DLQ started");
     }
 
     /**
@@ -133,6 +146,9 @@ public class MessageBuffer {
         int flushed = flush();
         logger.info("Flushed {} pending messages on shutdown", flushed);
 
+        // Stop DLQ (will process remaining retries)
+        deadLetterQueue.stop();
+
         // Shutdown scheduler
         flushScheduler.shutdown();
 
@@ -147,8 +163,8 @@ public class MessageBuffer {
             Thread.currentThread().interrupt();
         }
 
-        logger.info("MessageBuffer stopped. Total writes: {}, Failed: {}, Rejected: {}",
-                totalWrites.get(), failedWrites.get(), rejectionHandler.getRejectedCount());
+        logFinalStatistics();
+        logger.info("MessageBuffer stopped");
     }
 
     /**
@@ -156,18 +172,20 @@ public class MessageBuffer {
      */
     public boolean add(DatabaseMessage message) {
         if (!running) {
-            logger.warn("Buffer not running, dropping message: {}", message.getMessageId());
+            logger.warn("Buffer not running, sending to DLQ: {}", message.getMessageId());
+            deadLetterQueue.add(message);
             return false;
         }
 
         boolean added = messageQueue.offer(message);
 
         if (!added) {
-            logger.debug("Message queue full, dropping message: {}", message.getMessageId());
-            failedWrites.incrementAndGet();
+            logger.warn("Message queue full, sending to DLQ: {}", message.getMessageId());
+            deadLetterQueue.add(message);
+            return false;
         }
 
-        return added;
+        return true;
     }
 
     /**
@@ -187,21 +205,23 @@ public class MessageBuffer {
 
         // Submit batch write task to thread pool
         BatchWriteTask task = new BatchWriteTask(
-                batch,
-                batchWriter,
-                totalWrites,
-                failedWrites,
-                writeLatencies,
-                throughputTracker
+                batch,              // List<DatabaseMessage>
+                batchWriter,        // DatabaseBatchWriter
+                totalWrites,        // AtomicLong - success counter
+                totalDuplicates,    // AtomicLong - duplicate counter
+                failedWrites,       // AtomicLong - failure counter
+                writeLatencies,     // List<Long> - latency tracker
+                throughputTracker,  // ThroughputTracker
+                deadLetterQueue     // DeadLetterQueue
         );
 
         try {
             writerThreadPool.execute(task);
             return batch.size();
         } catch (RejectedExecutionException e) {
-            // Thread pool queue is full
-            logger.error("Thread pool rejected batch of {} messages", batch.size());
-            failedWrites.addAndGet(batch.size());
+            // Thread pool queue is full - send to DLQ
+            logger.error("Thread pool rejected batch of {} messages, sending to DLQ", batch.size());
+            deadLetterQueue.addAll(batch);
             return 0;
         }
     }
@@ -230,6 +250,20 @@ public class MessageBuffer {
         }
     }
 
+    private void logFinalStatistics() {
+        logger.info("═══════════════════════════════════════════════");
+        logger.info("MessageBuffer Final Statistics");
+        logger.info("═══════════════════════════════════════════════");
+        logger.info("Successful Writes: {}", totalWrites.get());
+        logger.info("Duplicate Writes:  {} (prevented)", totalDuplicates.get());
+        logger.info("Failed Writes:     {}", failedWrites.get());
+        logger.info("Rejected Tasks:    {}", rejectionHandler.getRejectedCount());
+        logger.info("DLQ Queue Size:    {}", deadLetterQueue.getQueueSize());
+        logger.info("DLQ Recovered:     {}", deadLetterQueue.getTotalRecovered());
+        logger.info("DLQ Abandoned:     {}", deadLetterQueue.getTotalAbandoned());
+        logger.info("═══════════════════════════════════════════════");
+    }
+
     // Getters for metrics
 
     public int getQueueSize() {
@@ -248,12 +282,28 @@ public class MessageBuffer {
         return totalWrites.get();
     }
 
+    public long getTotalDuplicates() {
+        return totalDuplicates.get();
+    }
+
     public long getFailedWrites() {
         return failedWrites.get();
     }
 
     public long getRejectedTasks() {
         return rejectionHandler.getRejectedCount();
+    }
+
+    public int getDLQSize() {
+        return deadLetterQueue.getQueueSize();
+    }
+
+    public long getDLQRecovered() {
+        return deadLetterQueue.getTotalRecovered();
+    }
+
+    public long getDLQAbandoned() {
+        return deadLetterQueue.getTotalAbandoned();
     }
 
     public List<Long> getWriteLatencies() {

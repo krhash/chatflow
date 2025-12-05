@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# ==========================================
+# Producer Server Configuration Loader
+# Only loads RabbitMQ configuration
+# ==========================================
+
+CONFIG_DIR="/home/ec2-user"
+
+echo "========================================="
+echo "Producer Server - Configuration Loader"
+echo "========================================="
+
+# ==========================================
+# Load RabbitMQ Configuration
+# ==========================================
+
+if [ -f "$CONFIG_DIR/rabbitmq.properties" ]; then
+    echo "📄 Loading RabbitMQ configuration"
+    echo "   File: $CONFIG_DIR/rabbitmq.properties"
+
+    # Set system property so RabbitMQConfig class can find it
+    export CATALINA_OPTS="$CATALINA_OPTS -Drabbitmq.config.path=$CONFIG_DIR/rabbitmq.properties"
+
+    # Parse key values for display
+    RABBITMQ_HOST=$(grep "^rabbitmq.host" "$CONFIG_DIR/rabbitmq.properties" | cut -d'=' -f2 | xargs)
+    RABBITMQ_PORT=$(grep "^rabbitmq.port" "$CONFIG_DIR/rabbitmq.properties" | cut -d'=' -f2 | xargs)
+    EXCHANGE=$(grep "^rabbitmq.exchange" "$CONFIG_DIR/rabbitmq.properties" | cut -d'=' -f2 | xargs)
+
+    echo "   ✅ Configuration loaded"
+    echo "   RabbitMQ: ${RABBITMQ_HOST}:${RABBITMQ_PORT}"
+    echo "   Exchange: ${EXCHANGE}"
+else
+    echo "   ⚠️  Configuration file not found: $CONFIG_DIR/rabbitmq.properties"
+    echo "   Application will use bundled config or defaults"
+fi
+
+# ==========================================
+# JVM Memory Configuration
+# Producer needs less memory than consumer
+# ==========================================
+
+export CATALINA_OPTS="$CATALINA_OPTS -Xms256m -Xmx1024m"
+export CATALINA_OPTS="$CATALINA_OPTS -XX:+UseG1GC"
+export CATALINA_OPTS="$CATALINA_OPTS -XX:MaxGCPauseMillis=100"
+
+# ==========================================
+# Summary
+# ==========================================
+
+echo ""
+echo "JVM Settings:"
+echo "  Heap: 256m-1024m"
+echo "  GC: G1"
+echo ""
+echo "========================================="
+echo "Producer Server Ready"
+echo "========================================="
