@@ -1,0 +1,72 @@
+{
+  "TableName": "chatflow-messages",
+  "AttributeDefinitions": [
+    {
+      "AttributeName": "message_id",
+      "AttributeType": "S"
+    },
+    {
+      "AttributeName": "room_id",
+      "AttributeType": "N"
+    },
+    {
+      "AttributeName": "timestamp",
+      "AttributeType": "N"
+    },
+    {
+      "AttributeName": "user_id",
+      "AttributeType": "S"
+    }
+  ],
+  "KeySchema": [
+    {
+      "AttributeName": "message_id",
+      "KeyType": "HASH"
+    }
+  ],
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "room-timestamp-index",
+      "KeySchema": [
+        {
+          "AttributeName": "room_id",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "timestamp",
+          "KeyType": "RANGE"
+        }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      }
+    },
+    {
+      "IndexName": "user-timestamp-index",
+      "KeySchema": [
+        {
+          "AttributeName": "user_id",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "timestamp",
+          "KeyType": "RANGE"
+        }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      }
+    }
+  ],
+  "BillingMode": "PAY_PER_REQUEST",
+  "Tags": [
+    {
+      "Key": "Project",
+      "Value": "ChatFlow"
+    },
+    {
+      "Key": "Environment",
+      "Value": "Assignment"
+    }
+  ]
+}

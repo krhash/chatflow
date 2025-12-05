@@ -1,0 +1,9 @@
+{
+  "message_id": {"S": "test_001"},
+  "room_id": {"N": "1"},
+  "user_id": {"S": "alice"},
+  "username": {"S": "Alice"},
+  "message": {"S": "Hello from DynamoDB!"},
+  "message_type": {"S": "TEXT"},
+  "timestamp": {"N": "1732329600000"}
+}
