@@ -6,3 +6,8 @@
 *.class
 /chatflow-app/hw2/server-v2/target
 /chatflow-app/hw2/consumer/target
+/chatflow-app/hw4/server/target
+/chatflow-app/hw4/distributed-client/target
+/chatflow-app/hw4/consumer-server/target
+/chatflow-app/consumer-server/target
+/chatflow-app/consumer-server/target

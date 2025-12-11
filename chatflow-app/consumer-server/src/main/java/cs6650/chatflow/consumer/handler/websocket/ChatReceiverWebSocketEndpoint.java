@@ -2,7 +2,6 @@ package cs6650.chatflow.consumer.handler.websocket;
 
 import cs6650.chatflow.consumer.commons.Constants;
 import cs6650.chatflow.consumer.util.RoomManager;
-import cs6650.chatflow.consumer.model.MessageAck;
 import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,16 +14,19 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.*;
 
 /**
- * WebSocket endpoint for clients to receive chat messages from specific rooms.
- * Clients connect with /chatflow-receiver/{roomId} and automatically start receiving messages.
- * Implements heartbeat mechanism to keep connections alive.
+ * WebSocket endpoint for anonymous listeners to receive chat messages from specific rooms.
+ *
+ * Use Case: Test clients, monitoring tools, or analytics listeners
+ * - Clients connect with /chatflow-receiver/{roomId}
+ * - No userId required (anonymous listening)
+ * - Automatically receive all messages broadcast to the room
+ * - Heartbeat mechanism keeps connections alive
  */
-    @ServerEndpoint(Constants.CHAT_RECEIVER_PATH)
-    public class ChatReceiverWebSocketEndpoint {
-        private static final Logger logger = LoggerFactory.getLogger(ChatReceiverWebSocketEndpoint.class);
-
-        private final RoomManager roomManager = RoomManager.getInstance();
-        private static final Gson gson = new Gson();
+@ServerEndpoint(Constants.CHAT_RECEIVER_PATH)
+public class ChatReceiverWebSocketEndpoint {
+    private static final Logger logger = LoggerFactory.getLogger(ChatReceiverWebSocketEndpoint.class);
+    private final RoomManager roomManager = RoomManager.getInstance();
+    private static final Gson gson = new Gson();
 
     @OnOpen
     public void onOpen(Session session, @PathParam("roomId") String roomId) {
@@ -33,7 +35,10 @@ import java.util.concurrent.*;
             if (!roomManager.isValidRoomId(roomId)) {
                 logger.warn("Invalid room ID: {} for session {}", roomId, session.getId());
                 try {
-                    session.close(new CloseReason(CloseReason.CloseCodes.CANNOT_ACCEPT, Constants.ERROR_INVALID_ROOM_ID));
+                    session.close(new CloseReason(
+                            CloseReason.CloseCodes.CANNOT_ACCEPT,
+                            Constants.ERROR_INVALID_ROOM_ID
+                    ));
                 } catch (IOException e) {
                     logger.error("Failed to close session for invalid room ID", e);
                 }
@@ -43,39 +48,50 @@ import java.util.concurrent.*;
             // Normalize room ID to numeric format
             String normalizedRoomId = roomManager.normalizeRoomId(roomId);
 
-            logger.info("WebSocket receiver connected - session: {}, room: {} (normalized: {})",
-                session.getId(), roomId, normalizedRoomId);
+            logger.info("🔌 Anonymous listener connected - session: {}, room: {} (normalized: {})",
+                    session.getId(), roomId, normalizedRoomId);
 
-            // Add session to room manager (using normalized ID)
+            // Store room ID in session properties for later use
+            session.getUserProperties().put("roomId", normalizedRoomId);
+
+            // Add session to room manager (no userId needed for anonymous listeners)
             roomManager.addSession(session, normalizedRoomId);
 
             // Start heartbeat scheduler for this session
             ScheduledExecutorService heartbeatScheduler = Executors.newSingleThreadScheduledExecutor(
-                r -> new Thread(r, "Heartbeat-" + session.getId()));
+                    r -> new Thread(r, "Heartbeat-" + session.getId())
+            );
 
             // Store scheduler in session properties for cleanup
             session.getUserProperties().put("heartbeatScheduler", heartbeatScheduler);
-            session.getUserProperties().put("roomId", roomId);
 
-            // Schedule periodic ping sending
+            // Schedule periodic ping sending (keep-alive)
             heartbeatScheduler.scheduleAtFixedRate(() -> {
-                try {
-                    if (session.isOpen()) {
-                        session.getBasicRemote().sendPing(ByteBuffer.wrap("ping".getBytes()));
-                        logger.debug("Ping sent to receiver session {}", session.getId());
-                    }
-                } catch (Exception e) {
-                    logger.debug("Failed to send ping to receiver session {}: {}", session.getId(), e.getMessage());
-                }
-            }, Constants.HEARTBEAT_INTERVAL_SECONDS, Constants.HEARTBEAT_INTERVAL_SECONDS, TimeUnit.SECONDS);
+                        try {
+                            if (session.isOpen()) {
+                                session.getBasicRemote().sendPing(ByteBuffer.wrap("ping".getBytes()));
+                                logger.trace("📡 Ping sent to listener session {}", session.getId());
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Failed to send ping to listener session {}: {}",
+                                    session.getId(), e.getMessage());
+                        }
+                    }, Constants.HEARTBEAT_INTERVAL_SECONDS,
+                    Constants.HEARTBEAT_INTERVAL_SECONDS,
+                    TimeUnit.SECONDS);
 
-            logger.info("Receiver session {} started listening to room {}", session.getId(), roomId);
+            logger.info("✅ Listener session {} now receiving messages from room {}",
+                    session.getId(), normalizedRoomId);
 
         } catch (Exception e) {
-            logger.error("Error in onOpen for session {}: {}", session.getId(), e.getMessage(), e);
+            logger.error("Error in onOpen for listener session {}: {}",
+                    session.getId(), e.getMessage(), e);
             try {
                 if (session.isOpen()) {
-                    session.close(new CloseReason(CloseReason.CloseCodes.UNEXPECTED_CONDITION, Constants.ERROR_INTERNAL_SERVER));
+                    session.close(new CloseReason(
+                            CloseReason.CloseCodes.UNEXPECTED_CONDITION,
+                            Constants.ERROR_INTERNAL_SERVER
+                    ));
                 }
             } catch (IOException closeEx) {
                 logger.error("Failed to close session on error", closeEx);
@@ -85,14 +101,14 @@ import java.util.concurrent.*;
 
     @OnClose
     public void onClose(Session session, CloseReason reason, @PathParam("roomId") String roomId) {
-        // Get room ID from session properties if not provided
+        // Get room ID from session properties
         String actualRoomId = (String) session.getUserProperties().get("roomId");
         if (actualRoomId == null) {
             actualRoomId = roomId;
         }
 
-        logger.info("WebSocket receiver disconnected - session: {}, room: {}, reason: {}",
-            session.getId(), actualRoomId, reason.getReasonPhrase());
+        logger.info("🔌 Listener disconnected - session: {}, room: {}, reason: {}",
+                session.getId(), actualRoomId, reason.getReasonPhrase());
 
         // Remove session from room manager
         if (actualRoomId != null) {
@@ -100,7 +116,8 @@ import java.util.concurrent.*;
         }
 
         // Cleanup heartbeat scheduler
-        ScheduledExecutorService scheduler = (ScheduledExecutorService) session.getUserProperties().get("heartbeatScheduler");
+        ScheduledExecutorService scheduler = (ScheduledExecutorService)
+                session.getUserProperties().get("heartbeatScheduler");
         if (scheduler != null) {
             scheduler.shutdown();
             try {
@@ -117,17 +134,21 @@ import java.util.concurrent.*;
     @OnError
     public void onError(Session session, Throwable t, @PathParam("roomId") String roomId) {
         String sessionId = (session != null) ? session.getId() : "unknown";
-        String actualRoomId = (session != null) ? (String) session.getUserProperties().get("roomId") : roomId;
+        String actualRoomId = (session != null)
+                ? (String) session.getUserProperties().get("roomId")
+                : roomId;
         if (actualRoomId == null) actualRoomId = "unknown";
 
-        logger.error("WebSocket receiver error - session: {}, room: {}, error: {}", sessionId, actualRoomId, t.getMessage());
+        logger.error("⚠️ Listener error - session: {}, room: {}, error: {}",
+                sessionId, actualRoomId, t.getMessage());
 
         if (session != null) {
             // Remove session from room manager
             roomManager.removeSession(session, actualRoomId);
 
             // Cleanup heartbeat scheduler on error
-            ScheduledExecutorService scheduler = (ScheduledExecutorService) session.getUserProperties().get("heartbeatScheduler");
+            ScheduledExecutorService scheduler = (ScheduledExecutorService)
+                    session.getUserProperties().get("heartbeatScheduler");
             if (scheduler != null) {
                 scheduler.shutdown();
                 try {
@@ -142,48 +163,37 @@ import java.util.concurrent.*;
 
             try {
                 if (session.isOpen() && !session.getUserProperties().containsKey("closing")) {
-                    // Mark closing to avoid recursive close calls
                     session.getUserProperties().put("closing", true);
-                    session.close(new CloseReason(CloseReason.CloseCodes.UNEXPECTED_CONDITION, "Error occurred"));
+                    session.close(new CloseReason(
+                            CloseReason.CloseCodes.UNEXPECTED_CONDITION,
+                            "Error occurred"
+                    ));
                 }
             } catch (IOException e) {
-                logger.debug("Exception closing receiver session {}: {}", sessionId, e.getMessage());
+                logger.debug("Exception closing listener session {}: {}",
+                        sessionId, e.getMessage());
             }
         }
     }
 
-        /**
-         * Handles client messages, primarily acknowledgments for delivered messages.
-         */
-        @OnMessage
-        public void onMessage(Session session, String message, @PathParam("roomId") String roomId) {
-            try {
-                // Try to parse as MessageAck
-                MessageAck ack = gson.fromJson(message, MessageAck.class);
-                if (ack != null && "ack".equals(ack.getMessageType())) {
-                    // Handle acknowledgment
-                    String normalizedRoomId = roomManager.normalizeRoomId(roomId);
-                    String userId = (String) session.getUserProperties().get("userId");
+    /**
+     * Handle messages from clients (mostly for logging/debugging).
+     * Anonymous listeners typically don't send messages, just receive.
+     */
+    @OnMessage
+    public void onMessage(Session session, String message, @PathParam("roomId") String roomId) {
+        try {
+            String normalizedRoomId = roomManager.normalizeRoomId(roomId);
 
-                    if (userId != null) {
-                        ack.setUserId(userId);
-                        ack.setRoomId(normalizedRoomId);
+            logger.debug("📨 Message received from listener session {} in room {}: {}",
+                    session.getId(), normalizedRoomId, message);
 
-                        boolean canAck = roomManager.processAcknowledgment(ack);
-                        logger.debug("Processed acknowledgment from user {} for message {} in room {}, canAck={}",
-                            userId, ack.getMessageId(), normalizedRoomId, canAck);
+            // Anonymous listeners don't typically send messages
+            // If they do, just log it (could be used for monitoring/debugging)
 
-                        // Note: The actual RabbitMQ ACK happens in the consumer thread
-                        // when all users have acknowledged
-                    } else {
-                        logger.warn("Received ack from session without userId: {}", session.getId());
-                    }
-                } else {
-                    logger.warn("Received unknown message type from session {} in room {}: {}", session.getId(), roomId, message);
-                }
-
-            } catch (Exception e) {
-                logger.error("Error processing message from session {} in room {}: {}", session.getId(), roomId, e.getMessage());
-            }
+        } catch (Exception e) {
+            logger.error("Error processing message from listener session {} in room {}: {}",
+                    session.getId(), roomId, e.getMessage());
         }
     }
+}

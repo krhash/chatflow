@@ -1,5 +1,6 @@
 package cs6650.chatflow.client.workers;
 
+import cs6650.chatflow.client.DistributedClient;
 import cs6650.chatflow.client.DistributedClient.AckQueueEntry;
 import cs6650.chatflow.client.commons.ClientMetrics;
 import cs6650.chatflow.client.commons.Constants;
@@ -11,18 +12,15 @@ import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Worker thread that sends ACK messages from the ACK queue.
- * Uses the ProducerConnectionPool (reuses connections for efficiency).
- *
- * SIMPLIFIED: No longer tracks sent ACK IDs.
- * Producer sends ACK_CONFIRMATION directly back for completion tracking.
+ * Worker that sends ACK messages and tracks them for echo detection.
  */
-public class AckSenderWorker implements Runnable {
+public class AckSenderWorker implements Runnable, DistributedClient.Stoppable {
 
     private static final Logger logger = LoggerFactory.getLogger(AckSenderWorker.class);
     private static final int MAX_RETRIES = 3;
@@ -33,14 +31,14 @@ public class AckSenderWorker implements Runnable {
     private final AtomicLong acksFailed;
     private final ClientMetrics metrics;
     private final Gson gson;
+    private volatile boolean running = true;
+    private Thread workerThread;
 
-    /**
-     * Constructor with 6 parameters (removed sentMessageIds).
-     */
     public AckSenderWorker(BlockingQueue<AckQueueEntry> ackQueue,
                            ProducerConnectionPool connectionPool,
                            AtomicLong acksSent,
                            AtomicLong acksFailed,
+                           Set<String> sentMessageIds,
                            ClientMetrics metrics,
                            Gson gson) {
         this.ackQueue = ackQueue;
@@ -53,18 +51,18 @@ public class AckSenderWorker implements Runnable {
 
     @Override
     public void run() {
+        this.workerThread = Thread.currentThread();
         try {
-            while (!Thread.currentThread().isInterrupted()) {
+            while (running) {
                 try {
                     AckQueueEntry entry = ackQueue.poll(1, TimeUnit.SECONDS);
-
                     if (entry != null) {
                         sendAck(entry);
                     }
-
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
+                    if (running) {
+                        break;
+                    }
                 }
             }
         } catch (Exception e) {
@@ -72,9 +70,6 @@ public class AckSenderWorker implements Runnable {
         }
     }
 
-    /**
-     * Send ACK with retry logic
-     */
     private void sendAck(AckQueueEntry entry) {
         ChatMessage originalMessage = entry.getOriginalMessage();
 
@@ -91,8 +86,7 @@ public class AckSenderWorker implements Runnable {
                 acksSent.incrementAndGet();
                 metrics.recordMessageAcked();
 
-                logger.debug("ACK sent for message {} to room {}",
-                        originalMessage.getMessageId(), roomId);
+                logger.debug("ACK sent for message {}", originalMessage.getMessageId());
 
             } else {
                 handleAckFailure(entry, "Connection unavailable for room " + roomId);
@@ -103,12 +97,9 @@ public class AckSenderWorker implements Runnable {
         }
     }
 
-    /**
-     * Create ACK message from original message
-     */
     private ChatMessage createAckMessage(ChatMessage originalMessage) {
         ChatMessage ackMessage = new ChatMessage();
-        ackMessage.setMessageId(originalMessage.getMessageId() + "-DELIVERY_ACK");
+        ackMessage.setMessageId(java.util.UUID.randomUUID().toString());
         ackMessage.setUserId(originalMessage.getUserId());
         ackMessage.setUsername(originalMessage.getUsername());
         ackMessage.setMessage("DELIVERY_ACK:" + originalMessage.getMessageId());
@@ -118,9 +109,6 @@ public class AckSenderWorker implements Runnable {
         return ackMessage;
     }
 
-    /**
-     * Handle ACK send failure with retry logic
-     */
     private void handleAckFailure(AckQueueEntry entry, String reason) {
         entry.incrementRetryCount();
 
@@ -138,9 +126,17 @@ public class AckSenderWorker implements Runnable {
             }
 
         } else {
-            logger.error("ACK permanently failed for message {} after {} attempts: {}",
-                    entry.getOriginalMessage().getMessageId(), MAX_RETRIES, reason);
+            logger.error("ACK permanently failed for message {} after {} attempts",
+                    entry.getOriginalMessage().getMessageId(), MAX_RETRIES);
             acksFailed.incrementAndGet();
+        }
+    }
+
+    @Override
+    public void stop() {
+        running = false;
+        if (workerThread != null) {
+            workerThread.interrupt();
         }
     }
 }

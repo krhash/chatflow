@@ -8,7 +8,8 @@ import cs6650.chatflow.client.model.ChatMessage;
 import cs6650.chatflow.client.model.MessageQueueEntry;
 import cs6650.chatflow.client.queues.MessageQueue;
 import cs6650.chatflow.client.workers.AckSenderWorker;
-import cs6650.chatflow.client.workers.MessageReceiverWorker;
+import cs6650.chatflow.client.workers.MessageListenerWorker;
+import cs6650.chatflow.client.workers.MessageProcessorWorker;
 import cs6650.chatflow.client.workers.MessageSenderWorker;
 
 import java.util.concurrent.*;
@@ -23,48 +24,40 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Distributed Client with Direct ACK Confirmation Handling
+ * Distributed Client with Separated Listener and Processor Architecture
  *
  * Architecture:
- * 1. Message Generation → MessageQueue → 100 Sender Threads → Producer Server (40 connections)
- * 2. Consumer Server (40 connections) → ReceiverQueue → 100 Receiver Threads → Process & Queue ACK
- * 3. AckQueue → 20 ACK Sender Threads → Producer Server (reuses connection pool)
- * 4. Producer sends ACK_CONFIRMATION directly back → Message marked as COMPLETED (optimized!)
- *
- * Throughput Measurement:
- * - End-to-End Throughput: messagesCompleted / time (full lifecycle with ACK confirmation)
+ * 1. Message Generation → MessageQueue → 100 Sender Threads → Producer (40 connections)
+ * 2. Consumer (40 connections) → 20 Listeners (1 per room) → ReceiverQueue
+ * 3. ReceiverQueue → 100 Processor Threads → Check & Queue ACKs
+ * 4. AckQueue → 20 ACK Sender Threads → Producer (reuses connections)
+ * 5. ACK echoes back through consumer → Detected by processors → messagesCompleted++
  */
 public class DistributedClient {
 
     private static final Logger logger = LoggerFactory.getLogger(DistributedClient.class);
 
     // ========== Configuration ==========
-    private static final int TOTAL_MESSAGES = 10000000;
-    private static final int MAX_USERS = 25000;
-    private static final boolean SEND_LEAVE_MESSAGES = false;
+    private static final int TOTAL_MESSAGES = 500000;
+    private static final int JOIN_MESSAGE_PERCENTAGE = 5;  // 20% JOIN messages
 
-    // Thread pool sizes
     private static final int SENDER_THREAD_POOL_SIZE = 100;
-    private static final int RECEIVER_THREAD_POOL_SIZE = 100;
+    private static final int LISTENER_THREAD_POOL_SIZE = 20;   // 1 per room
+    private static final int PROCESSOR_THREAD_POOL_SIZE = 100; // Process from queue
     private static final int ACK_SENDER_THREAD_POOL_SIZE = 20;
     // ===================================
 
-    // Server configuration
     private final String producerHost;
     private final int producerPort;
     private final String consumerHost;
     private final int consumerPort;
 
-    // Message queue
+    // Queues
     private final MessageQueue messageQueue = new MessageQueue();
-
-    // ========== Queues ==========
     private final BlockingQueue<ReceivedMessageEntry> receiverQueue =
             new LinkedBlockingQueue<>(100_000);
-
     private final BlockingQueue<AckQueueEntry> ackQueue =
             new LinkedBlockingQueue<>(100_000);
-    // ============================
 
     // Statistics
     private final AtomicLong messagesSent = new AtomicLong(0);
@@ -76,50 +69,46 @@ public class DistributedClient {
     private final AtomicLong messagesCompleted = new AtomicLong(0);
 
     private final long startTime = System.currentTimeMillis();
-    private final AtomicInteger roomIdCounter = new AtomicInteger(0);
+    private long endTime = 0;
 
-    // Track sent message IDs (for original messages only, not ACKs)
+    // Track sent message IDs
     private final Set<String> sentMessageIds = ConcurrentHashMap.newKeySet();
 
-    // ========== NEW: Direct ACK confirmation tracking ==========
-    // Maps original message ID → timestamp when sent
-    private final ConcurrentHashMap<String, Long> pendingMessages = new ConcurrentHashMap<>();
-    // ===========================================================
-
-    // Client metrics
     private final ClientMetrics metrics = new ClientMetrics();
 
-    // Executor services
+    // Executors
     private ExecutorService messageGeneratorExecutor;
     private ExecutorService senderExecutor;
-    private ExecutorService receiverExecutor;
+    private ExecutorService listenerExecutor;     // NEW: For listeners
+    private ExecutorService processorExecutor;    // NEW: For processors
     private ExecutorService ackSenderExecutor;
     private ScheduledExecutorService monitorExecutor;
 
-    // WebSocket connection pools
+    // Connection pools
     private ReceiverConnectionPool consumerConnectionPool;
     private ProducerConnectionPool producerConnectionPool;
 
-    // Fixed user pool
     private final List<String> userPool = new ArrayList<>();
-
-    // JSON serializer
     private final Gson gson = new GsonBuilder().create();
 
-    /**
-     * Constructor with server configuration.
-     */
+    // Worker tracking
+    private final List<Stoppable> workers = new CopyOnWriteArrayList<>();
+
+    public interface Stoppable {
+        void stop();
+    }
+
     public DistributedClient(String producerHost, int producerPort, String consumerHost, int consumerPort) {
         this.producerHost = producerHost;
         this.producerPort = producerPort;
         this.consumerHost = consumerHost;
         this.consumerPort = consumerPort;
 
-        // Pre-create fixed user pool
-        for (int i = 1; i <= MAX_USERS; i++) {
+        // Create user pool (will use subset for JOIN messages)
+        for (int i = 1; i <= 25000; i++) {
             userPool.add(String.valueOf(i));
         }
-        System.out.println("Created fixed user pool: " + MAX_USERS + " users");
+        System.out.println("Created user pool: " + userPool.size() + " users");
     }
 
     public static void main(String[] args) {
@@ -135,8 +124,7 @@ public class DistributedClient {
             consumerPort = Integer.parseInt(args[3]);
         } else if (args.length > 0) {
             System.err.println("Usage: java -jar distributed-client.jar [producerHost] [producerPort] [consumerHost] [consumerPort]");
-            System.err.println("Example: java -jar distributed-client.jar localhost 8080 localhost 8081");
-            System.err.println("Using default values: localhost 8080 localhost 8081");
+            System.err.println("Using defaults: localhost 8080 localhost 8081");
         }
 
         DistributedClient client = new DistributedClient(producerHost, producerPort, consumerHost, consumerPort);
@@ -145,102 +133,65 @@ public class DistributedClient {
 
     public void start() {
         try {
-            logger.info("Starting Distributed Client with Direct ACK Confirmations...");
-            logger.info("Target: {} messages | Users: {} (fixed pool) | LEAVE messages: {}",
-                    TOTAL_MESSAGES, MAX_USERS, SEND_LEAVE_MESSAGES);
-            logger.info("Thread Pools: {} senders, {} receivers, {} ACK senders",
-                    SENDER_THREAD_POOL_SIZE, RECEIVER_THREAD_POOL_SIZE, ACK_SENDER_THREAD_POOL_SIZE);
+            logger.info("Starting Distributed Client with Separated Listener/Processor Architecture...");
+            logger.info("Target: {} messages ({}% JOIN, {}% TEXT)",
+                    TOTAL_MESSAGES, JOIN_MESSAGE_PERCENTAGE, 100 - JOIN_MESSAGE_PERCENTAGE);
+            logger.info("Threads: {} senders, {} listeners, {} processors, {} ACK senders",
+                    SENDER_THREAD_POOL_SIZE, LISTENER_THREAD_POOL_SIZE,
+                    PROCESSOR_THREAD_POOL_SIZE, ACK_SENDER_THREAD_POOL_SIZE);
             logger.info("Connections: 40 producer (2/room), 40 consumer (2/room)");
-            logger.info("ACK Flow: Producer → Client (direct confirmation, optimized!)");
 
             initializeExecutors();
             startMessageGeneration();
             startSenders();
-            startReceivers();
+            startListeners();       // NEW
+            startProcessors();      // NEW
             startAckSenders();
             startMonitoring();
 
             waitForCompletion();
-            shutdown();
-            printFinalReport();
+            endTime = System.currentTimeMillis();
 
         } catch (Exception e) {
             logger.error("Error running distributed client: {}", e.getMessage(), e);
+        } finally {
+            if (endTime == 0) {
+                endTime = System.currentTimeMillis();
+            }
             shutdown();
+            printFinalReport();
         }
     }
 
-    /**
-     * Initialize executor services and connection pools.
-     */
     private void initializeExecutors() {
         messageGeneratorExecutor = Executors.newSingleThreadExecutor(r -> new Thread(r, "MessageGenerator"));
-
         senderExecutor = Executors.newFixedThreadPool(SENDER_THREAD_POOL_SIZE,
                 r -> new Thread(r, "Sender-" + r.hashCode()));
-
-        receiverExecutor = Executors.newFixedThreadPool(RECEIVER_THREAD_POOL_SIZE,
-                r -> new Thread(r, "Receiver-" + r.hashCode()));
-
+        listenerExecutor = Executors.newFixedThreadPool(LISTENER_THREAD_POOL_SIZE,
+                r -> new Thread(r, "Listener-" + r.hashCode()));
+        processorExecutor = Executors.newFixedThreadPool(PROCESSOR_THREAD_POOL_SIZE,
+                r -> new Thread(r, "Processor-" + r.hashCode()));
         ackSenderExecutor = Executors.newFixedThreadPool(ACK_SENDER_THREAD_POOL_SIZE,
                 r -> new Thread(r, "AckSender-" + r.hashCode()));
-
         monitorExecutor = Executors.newScheduledThreadPool(1, r -> new Thread(r, "Monitor"));
 
         initializeConsumerConnectionPool();
         initializeProducerConnectionPool();
     }
 
-    /**
-     * Initialize consumer connection pool.
-     */
     private void initializeConsumerConnectionPool() {
         consumerConnectionPool = new ReceiverConnectionPool(
-                consumerHost,
-                consumerPort,
-                Constants.CONSUMER_SERVER_PATH,
-                2
+                consumerHost, consumerPort, Constants.CONSUMER_SERVER_PATH, 2
         );
+        // Connect asynchronously
+        consumerConnectionPool.connect();
         metrics.markStartTime();
-        System.out.println("Consumer connection pool initialized: 40 connections (2 per room) at " +
-                consumerHost + ":" + consumerPort);
+        System.out.println("Consumer connection pool initialized: 40 connections (2 per room)");
     }
 
-    /**
-     * Initialize producer connection pool with ACK confirmation handler.
-     */
     private void initializeProducerConnectionPool() {
-        producerConnectionPool = new ProducerConnectionPool(
-                producerHost,
-                producerPort,
-                Constants.PRODUCER_SERVER_PATH,
-                this::handleAckConfirmation  // NEW: Pass ACK confirmation handler
-        );
-        System.out.println("Producer connection pool initialized: 40 connections (2 per room) at " +
-                producerHost + ":" + producerPort);
-        System.out.println("✓ Producer connections handle direct ACK confirmations");
-    }
-
-    /**
-     * NEW: Handle ACK confirmation received from producer.
-     * Called when producer sends ACK_CONFIRMATION message directly back.
-     */
-    private void handleAckConfirmation(ChatMessage confirmation) {
-        try {
-            // Extract original message ID from confirmation
-            String originalMessageId = confirmation.getOriginalMessageId();
-
-            if (originalMessageId != null && pendingMessages.remove(originalMessageId) != null) {
-                // Message lifecycle complete!
-                messagesCompleted.incrementAndGet();
-                logger.debug("Message {} completed (ACK confirmation received)", originalMessageId);
-            } else {
-                logger.debug("Received ACK confirmation for unknown message: {}", originalMessageId);
-            }
-
-        } catch (Exception e) {
-            logger.error("Error handling ACK confirmation: {}", e.getMessage(), e);
-        }
+        producerConnectionPool = new ProducerConnectionPool(producerHost, producerPort, Constants.PRODUCER_SERVER_PATH);
+        System.out.println("Producer connection pool initialized: 40 connections (2 per room)");
     }
 
     private void startMessageGeneration() {
@@ -250,53 +201,62 @@ public class DistributedClient {
 
     private void startSenders() {
         for (int i = 0; i < SENDER_THREAD_POOL_SIZE; i++) {
-            senderExecutor.submit(new MessageSenderWorker(
-                    messageQueue,
-                    producerConnectionPool,
-                    messagesSent,
-                    sentMessageIds,
-                    pendingMessages,  // NEW: Pass pending messages tracker
-                    metrics,
-                    gson
-            ));
+            MessageSenderWorker worker = new MessageSenderWorker(
+                    messageQueue, producerConnectionPool, messagesSent, sentMessageIds, metrics, gson
+            );
+            workers.add(worker);
+            senderExecutor.submit(worker);
         }
         System.out.println("Started " + SENDER_THREAD_POOL_SIZE + " sender threads");
     }
 
-    private void startReceivers() {
-        for (int i = 0; i < RECEIVER_THREAD_POOL_SIZE; i++) {
-            int roomNumber = (i % Constants.TOTAL_ROOMS) + Constants.MIN_ROOM_ID;
-            String roomId = "room" + roomNumber;
+    /**
+     * NEW: Start listener threads - one per room.
+     */
+    private void startListeners() {
+        for (int roomId = Constants.MIN_ROOM_ID; roomId <= Constants.MAX_ROOM_ID; roomId++) {
+            String roomIdStr = "room" + roomId;
 
-            receiverExecutor.submit(new MessageReceiverWorker(
-                    roomId,
+            MessageListenerWorker worker = new MessageListenerWorker(
+                    roomIdStr,
                     consumerConnectionPool,
                     receiverQueue,
-                    ackQueue,
-                    sentMessageIds,
                     messagesReceived,
-                    acksQueued,
-                    receiverQueueDropped,
-                    metrics
-            ));
+                    receiverQueueDropped
+            );
+            workers.add(worker);
+            listenerExecutor.submit(worker);
         }
-        System.out.println("Started " + RECEIVER_THREAD_POOL_SIZE + " receiver threads (5 per room)");
+        System.out.println("Started " + LISTENER_THREAD_POOL_SIZE + " listener threads (1 per room)");
     }
 
     /**
-     * Start ACK sender threads.
+     * NEW: Start processor threads - process from receiver queue.
      */
+    private void startProcessors() {
+        for (int i = 0; i < PROCESSOR_THREAD_POOL_SIZE; i++) {
+            MessageProcessorWorker worker = new MessageProcessorWorker(
+                    receiverQueue,
+                    ackQueue,
+                    sentMessageIds,
+                    acksQueued,
+                    messagesCompleted,
+                    metrics
+            );
+            workers.add(worker);
+            processorExecutor.submit(worker);
+        }
+        System.out.println("Started " + PROCESSOR_THREAD_POOL_SIZE + " processor threads");
+    }
+
     private void startAckSenders() {
         for (int i = 0; i < ACK_SENDER_THREAD_POOL_SIZE; i++) {
-            ackSenderExecutor.submit(new AckSenderWorker(
-                    ackQueue,
-                    producerConnectionPool,
-                    acksSent,
-                    acksFailed,
-                    // REMOVED: sentMessageIds parameter (no longer needed)
-                    metrics,
-                    gson
-            ));
+            AckSenderWorker worker = new AckSenderWorker(
+                    ackQueue, producerConnectionPool, acksSent, acksFailed,
+                    sentMessageIds, metrics, gson
+            );
+            workers.add(worker);
+            ackSenderExecutor.submit(worker);
         }
         System.out.println("Started " + ACK_SENDER_THREAD_POOL_SIZE + " ACK sender threads");
     }
@@ -307,17 +267,18 @@ public class DistributedClient {
 
     private void generateMessages() {
         try {
-            System.out.println("Starting message generation with fixed user pool...");
+            System.out.println("Starting message generation...");
             Random random = new Random();
 
-            // JOIN messages
-            int joinCount = MAX_USERS;
-            System.out.println("Phase 1: Generating " + joinCount + " JOIN messages...");
+            // ========== UPDATED: 20% JOIN messages ==========
+            int joinCount = (TOTAL_MESSAGES * JOIN_MESSAGE_PERCENTAGE) / 100;
+            System.out.println("Phase 1: Generating " + joinCount + " JOIN messages (" +
+                    JOIN_MESSAGE_PERCENTAGE + "%)...");
 
-            for (String userId : userPool) {
+            for (int i = 0; i < joinCount; i++) {
+                String userId = userPool.get(i % userPool.size());
                 ChatMessage message = createMessage(userId, Constants.MESSAGE_TYPE_JOIN, "joined");
                 message.setUsername("User" + userId);
-
                 String randomRoomId = "room" + (random.nextInt(Constants.TOTAL_ROOMS) + Constants.MIN_ROOM_ID);
 
                 try {
@@ -330,9 +291,10 @@ public class DistributedClient {
 
             System.out.println("✅ Generated " + joinCount + " JOIN messages");
 
-            // TEXT messages
-            int textCount = SEND_LEAVE_MESSAGES ? (TOTAL_MESSAGES * 9) / 10 : TOTAL_MESSAGES - joinCount;
-            System.out.println("Phase 2: Generating " + textCount + " TEXT messages...");
+            // ========== UPDATED: 80% TEXT messages ==========
+            int textCount = TOTAL_MESSAGES - joinCount;
+            System.out.println("Phase 2: Generating " + textCount + " TEXT messages (" +
+                    ((100 - JOIN_MESSAGE_PERCENTAGE)) + "%)...");
 
             String[] messagePool = Arrays.copyOfRange(Constants.MESSAGE_POOL,
                     0, Math.min(10, Constants.MESSAGE_POOL.length));
@@ -357,34 +319,12 @@ public class DistributedClient {
 
             System.out.println("✅ Generated " + textCount + " TEXT messages");
 
-            // LEAVE messages (optional)
-            if (SEND_LEAVE_MESSAGES) {
-                int leaveCount = TOTAL_MESSAGES / 20;
-                System.out.println("Phase 3: Generating " + leaveCount + " LEAVE messages...");
-
-                List<String> usersToLeave = new ArrayList<>(userPool);
-                Collections.shuffle(usersToLeave);
-
-                for (int i = 0; i < Math.min(leaveCount, usersToLeave.size()); i++) {
-                    String userId = usersToLeave.get(i);
-                    ChatMessage message = createMessage(userId, Constants.MESSAGE_TYPE_LEAVE, "left");
-                    String randomRoomId = "room" + (random.nextInt(Constants.TOTAL_ROOMS) + Constants.MIN_ROOM_ID);
-
-                    try {
-                        messageQueue.put(new MessageQueueEntry(message, randomRoomId));
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-
-                System.out.println("✅ Generated LEAVE messages");
-            }
-
             System.out.println();
             System.out.println("═══════════════════════════════════════════════════════");
             System.out.println("Message generation completed!");
             System.out.println("  Total queued: " + messageQueue.size() + " messages");
+            System.out.println("  Distribution: " + joinCount + " JOIN (" + JOIN_MESSAGE_PERCENTAGE + "%), " +
+                    textCount + " TEXT (" + (100 - JOIN_MESSAGE_PERCENTAGE) + "%)");
             System.out.println("═══════════════════════════════════════════════════════");
 
         } catch (Exception e) {
@@ -439,45 +379,43 @@ public class DistributedClient {
         System.out.println();
         System.out.println("Waiting for message processing to complete...");
 
-        // Wait for all messages to be sent
         while (messagesSent.get() < TOTAL_MESSAGES) {
             Thread.sleep(1000);
-
             if ((System.currentTimeMillis() - startTime) > 3600000) {
-                System.out.println("Timeout reached. Proceeding with partial results.");
+                System.out.println("Timeout reached.");
                 break;
             }
         }
 
-        System.out.println("All messages sent! Waiting for ACK confirmations...");
+        System.out.println("All messages sent! Waiting for ACK echoes...");
 
-        // Wait for all messages to complete
         long lastCompletedCount = messagesCompleted.get();
         int idleCount = 0;
 
-        while (messagesCompleted.get() < TOTAL_MESSAGES) {
+        while (messagesCompleted.get() < TOTAL_MESSAGES && idleCount <= 60) {
             Thread.sleep(1000);
 
             long currentCompleted = messagesCompleted.get();
-            long currentSent = messagesSent.get();
-            long currentAcked = acksSent.get();
+
+            if (currentCompleted >= TOTAL_MESSAGES) {
+                break;
+            }
 
             if ((idleCount % 10) == 0) {
                 System.out.printf("  Progress: Sent=%,d | AcksSent=%,d | Completed=%,d/%,d (%.1f%%) | " +
-                                "Pending=%,d | RcvQ=%,d | AckQ=%,d%n",
-                        currentSent, currentAcked, currentCompleted, TOTAL_MESSAGES,
+                                "RcvQ=%,d | AckQ=%,d%n",
+                        messagesSent.get(), acksSent.get(), currentCompleted, TOTAL_MESSAGES,
                         (currentCompleted * 100.0) / TOTAL_MESSAGES,
-                        pendingMessages.size(), receiverQueue.size(), ackQueue.size());
+                        receiverQueue.size(), ackQueue.size());
             }
 
             if (currentCompleted == lastCompletedCount) {
                 idleCount++;
                 if (idleCount > 60) {
-                    System.out.println("Message completion stalled. Checking state...");
-                    System.out.println("  Messages sent: " + currentSent);
-                    System.out.println("  ACKs sent: " + currentAcked);
-                    System.out.println("  Messages completed: " + currentCompleted);
-                    System.out.println("  Pending messages: " + pendingMessages.size());
+                    System.out.println("Completion stalled. Final state:");
+                    System.out.println("  Sent: " + messagesSent.get());
+                    System.out.println("  ACKs sent: " + acksSent.get());
+                    System.out.println("  Completed: " + currentCompleted);
 
                     if (receiverQueue.size() == 0 && ackQueue.size() == 0) {
                         System.out.println("Queues empty. Proceeding with shutdown.");
@@ -491,9 +429,6 @@ public class DistributedClient {
         }
 
         System.out.println("Message lifecycle complete!");
-        System.out.println("  Final: Sent=" + messagesSent.get() +
-                " | AcksSent=" + acksSent.get() +
-                " | Completed=" + messagesCompleted.get());
     }
 
     private void shutdown() {
@@ -502,23 +437,29 @@ public class DistributedClient {
         System.out.println("Shutting down client...");
         System.out.println("═══════════════════════════════════════════════════════");
 
-        shutdownExecutor(messageGeneratorExecutor, "MessageGenerator");
-        shutdownExecutor(senderExecutor, "Sender");
-
-        System.out.println("Draining receiver queue (" + receiverQueue.size() + " remaining)...");
-        shutdownExecutor(receiverExecutor, "Receiver");
-
-        System.out.println("Draining ACK queue (" + ackQueue.size() + " remaining)...");
-        shutdownExecutor(ackSenderExecutor, "AckSender");
-
+        // 1. Stop monitor first
         shutdownExecutor(monitorExecutor, "Monitor");
 
+        // 2. Signal all workers to stop
+        System.out.println("Signaling " + workers.size() + " workers to stop...");
+        for (Stoppable worker : workers) {
+            worker.stop();
+        }
+
+        // 3. Close connections (unblocks I/O)
         if (consumerConnectionPool != null) {
             consumerConnectionPool.closeAll();
         }
         if (producerConnectionPool != null) {
             producerConnectionPool.closeAll();
         }
+
+        // 4. Shutdown executors
+        shutdownExecutor(messageGeneratorExecutor, "MessageGenerator");
+        shutdownExecutor(senderExecutor, "Sender");
+        shutdownExecutor(listenerExecutor, "Listener");
+        shutdownExecutor(processorExecutor, "Processor");
+        shutdownExecutor(ackSenderExecutor, "AckSender");
 
         System.out.println("✓ Client shutdown complete");
     }
@@ -527,8 +468,8 @@ public class DistributedClient {
         if (executor != null) {
             executor.shutdown();
             try {
-                if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
-                    System.out.println("⚠️  " + name + " executor did not terminate in time, forcing shutdown...");
+                if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    System.out.println("⚠️  " + name + " did not terminate, forcing shutdown...");
                     executor.shutdownNow();
                 }
             } catch (InterruptedException e) {
@@ -539,7 +480,7 @@ public class DistributedClient {
     }
 
     private void printFinalReport() {
-        long totalTime = System.currentTimeMillis() - startTime;
+        long totalTime = endTime - startTime;
         long sent = messagesSent.get();
         long received = messagesReceived.get();
         long acked = acksSent.get();
@@ -549,6 +490,9 @@ public class DistributedClient {
 
         double throughput = (totalTime > 0) ? (completed * 1000.0) / totalTime : 0;
 
+        int joinCount = (TOTAL_MESSAGES * JOIN_MESSAGE_PERCENTAGE) / 100;
+        int textCount = TOTAL_MESSAGES - joinCount;
+
         System.out.println();
         System.out.println("╔══════════════════════════════════════════════════════╗");
         System.out.println("║            HIGH-THROUGHPUT TEST RESULTS              ║");
@@ -556,77 +500,40 @@ public class DistributedClient {
         System.out.println();
         System.out.println("Configuration:");
         System.out.println("  Total Messages: " + String.format("%,d", TOTAL_MESSAGES));
-        System.out.println("  User Pool: " + MAX_USERS + " users (fixed)");
-        System.out.println("  Sender Threads: " + SENDER_THREAD_POOL_SIZE);
-        System.out.println("  Receiver Threads: " + RECEIVER_THREAD_POOL_SIZE);
-        System.out.println("  ACK Sender Threads: " + ACK_SENDER_THREAD_POOL_SIZE);
-        System.out.println("  Producer Connections: 40 (2 per room)");
-        System.out.println("  Consumer Connections: 40 (2 per room)");
+        System.out.println("  JOIN: " + String.format("%,d", joinCount) + " (" + JOIN_MESSAGE_PERCENTAGE + "%)");
+        System.out.println("  TEXT: " + String.format("%,d", textCount) + " (" + (100 - JOIN_MESSAGE_PERCENTAGE) + "%)");
+        System.out.println("  Threads: " + SENDER_THREAD_POOL_SIZE + " senders, " +
+                LISTENER_THREAD_POOL_SIZE + " listeners, " +
+                PROCESSOR_THREAD_POOL_SIZE + " processors, " +
+                ACK_SENDER_THREAD_POOL_SIZE + " ACK senders");
+        System.out.println("  Connections: 40 producer, 40 consumer");
         System.out.println();
-        System.out.println("Performance Results:");
-        System.out.println("  Duration: " + (totalTime/1000) + " seconds (" +
-                String.format("%.1f", totalTime/60000.0) + " minutes)");
+        System.out.println("Performance:");
+        System.out.println("  Duration: " + (totalTime/1000) + " sec (" +
+                String.format("%.1f", totalTime/60000.0) + " min)");
         System.out.println();
-
-        System.out.println("Message Counts:");
-        System.out.println("  Messages Sent: " + String.format("%,d", sent));
-        System.out.println("  Messages Received: " + String.format("%,d", received));
+        System.out.println("Counts:");
+        System.out.println("  Sent: " + String.format("%,d", sent));
+        System.out.println("  Received: " + String.format("%,d", received));
         System.out.println("  ACKs Sent: " + String.format("%,d", acked));
-        System.out.println("  Messages COMPLETED: " + String.format("%,d", completed) +
-                " (" + String.format("%.1f%%", (completed * 100.0) / sent) + " of sent)");
+        System.out.println("  Completed: " + String.format("%,d", completed) +
+                " (" + String.format("%.1f%%", (completed * 100.0) / sent) + ")");
         System.out.println();
-
-        System.out.println("⭐ End-to-End Throughput: " + String.format("%.2f", throughput) + " messages/sec");
-        System.out.println("   (Complete lifecycle: send → receive → ACK → ACK confirmation from producer)");
+        System.out.println("⭐ End-to-End Throughput: " + String.format("%.2f", throughput) + " msg/sec");
         System.out.println();
-
-        System.out.println("Error Statistics:");
-        System.out.println("  ACKs Failed: " + String.format("%,d", ackFailed));
-        System.out.println("  Messages Dropped (Queue Full): " + String.format("%,d", dropped));
+        System.out.println("Errors:");
+        System.out.println("  ACK Failures: " + ackFailed);
+        System.out.println("  Dropped: " + dropped);
         System.out.println("  Connection Failures: " + metrics.getConnectionFailures());
-
-        if (acked > 0) {
-            double ackSuccessRate = ((acked - ackFailed) * 100.0) / acked;
-            System.out.println("  ACK Success Rate: " + String.format("%.2f%%", ackSuccessRate));
-        }
-
         System.out.println();
-        System.out.println("Queue Statistics:");
-        System.out.println("  Final Message Queue Depth: " + messageQueue.size());
-        System.out.println("  Final Receiver Queue Depth: " + receiverQueue.size());
-        System.out.println("  Final ACK Queue Depth: " + ackQueue.size());
-        System.out.println("  Remaining Pending Messages: " + pendingMessages.size());
-        System.out.println();
-
-        System.out.println("Message Distribution:");
-        System.out.println("  JOIN: " + String.format("%,d", MAX_USERS) + " (" +
-                String.format("%.1f%%", MAX_USERS * 100.0 / TOTAL_MESSAGES) + ")");
-
-        if (SEND_LEAVE_MESSAGES) {
-            int textCount = (TOTAL_MESSAGES * 9) / 10;
-            int leaveCount = TOTAL_MESSAGES / 20;
-            System.out.println("  TEXT: " + String.format("%,d", textCount) + " (" +
-                    String.format("%.1f%%", textCount * 100.0 / TOTAL_MESSAGES) + ")");
-            System.out.println("  LEAVE: " + String.format("%,d", leaveCount) + " (" +
-                    String.format("%.1f%%", leaveCount * 100.0 / TOTAL_MESSAGES) + ")");
-        } else {
-            int textCount = TOTAL_MESSAGES - MAX_USERS;
-            System.out.println("  TEXT: " + String.format("%,d", textCount) + " (" +
-                    String.format("%.1f%%", textCount * 100.0 / TOTAL_MESSAGES) + ")");
-            System.out.println("  LEAVE: 0 (disabled)");
-        }
-
+        System.out.println("Queues:");
+        System.out.println("  Message: " + messageQueue.size());
+        System.out.println("  Receiver: " + receiverQueue.size());
+        System.out.println("  ACK: " + ackQueue.size());
         System.out.println();
         System.out.println("═════════════════════════════════════════════════════");
-        System.out.println("Next Steps:");
-        System.out.println("  1. Wait 2-3 minutes for consumer to flush all batches");
-        System.out.println("  2. Call metrics API:");
-        System.out.println("     curl http://" + consumerHost + ":" + consumerPort + "/consumer-server/api/metrics");
-        System.out.println("═════════════════════════════════════════════════════");
-        System.out.println();
     }
 
-    // Queue Entry Classes
     public static class ReceivedMessageEntry {
         private final ChatMessage message;
         private final long receivedTimestamp;
@@ -636,13 +543,8 @@ public class DistributedClient {
             this.receivedTimestamp = System.currentTimeMillis();
         }
 
-        public ChatMessage getMessage() {
-            return message;
-        }
-
-        public long getReceivedTimestamp() {
-            return receivedTimestamp;
-        }
+        public ChatMessage getMessage() { return message; }
+        public long getReceivedTimestamp() { return receivedTimestamp; }
     }
 
     public static class AckQueueEntry {
@@ -656,20 +558,9 @@ public class DistributedClient {
             this.retryCount = 0;
         }
 
-        public ChatMessage getOriginalMessage() {
-            return originalMessage;
-        }
-
-        public long getQueuedTimestamp() {
-            return queuedTimestamp;
-        }
-
-        public int getRetryCount() {
-            return retryCount;
-        }
-
-        public void incrementRetryCount() {
-            this.retryCount++;
-        }
+        public ChatMessage getOriginalMessage() { return originalMessage; }
+        public long getQueuedTimestamp() { return queuedTimestamp; }
+        public int getRetryCount() { return retryCount; }
+        public void incrementRetryCount() { this.retryCount++; }
     }
 }

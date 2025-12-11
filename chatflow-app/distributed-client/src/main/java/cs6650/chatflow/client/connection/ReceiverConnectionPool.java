@@ -69,7 +69,9 @@ public class ReceiverConnectionPool {
         this.serverPort = serverPort;
         this.serverPath = serverPath;
         this.connectionsPerRoom = connectionsPerRoom;
+    }
 
+    public void connect() {
         // Initialize multiple connections for each room (room1-room20)
         for (int roomId = 1; roomId <= 20; roomId++) {
             String roomIdStr = "room" + roomId;
@@ -95,15 +97,8 @@ public class ReceiverConnectionPool {
                         this::handleMessage  // Pass handleMessage as callback
                 );
 
-                boolean connected = client.connectBlocking(10, java.util.concurrent.TimeUnit.SECONDS);
-
-                if (connected && client.isOpen()) {
-                    connections.add(client);
-                    logger.info("Consumer connection {} established for {} (total: {})",
-                            i + 1, roomId, connections.size());
-                } else {
-                    logger.error("Failed to establish consumer connection {} for {}", i + 1, roomId);
-                }
+                client.connect();
+                connections.add(client);
 
             } catch (Exception e) {
                 logger.error("Error initializing consumer connection for {}: {}", roomId, e.getMessage());

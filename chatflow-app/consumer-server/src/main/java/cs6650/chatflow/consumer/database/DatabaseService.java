@@ -1,5 +1,6 @@
 package cs6650.chatflow.consumer.database;
 
+import com.amazonaws.services.dynamodbv2.document.DynamoDB;
 import cs6650.chatflow.consumer.model.ChatEvent;
 import cs6650.chatflow.consumer.database.model.DatabaseMetrics;
 import java.util.List;
@@ -58,4 +59,5 @@ public interface DatabaseService {
     long getTotalMessageCount();
     DatabaseMetrics getMetrics();
     String getDatabaseType();
+    DynamoDB getDynamoDB();
 }

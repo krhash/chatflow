@@ -1,6 +1,7 @@
 package cs6650.chatflow.consumer.util;
 
 import cs6650.chatflow.consumer.commons.Constants;
+import cs6650.chatflow.consumer.messaging.MessageConsumerManager;
 import cs6650.chatflow.consumer.model.ChatEvent;
 import cs6650.chatflow.consumer.model.MessageAck;
 import com.google.gson.Gson;
@@ -31,6 +32,8 @@ public class RoomManager {
     // Circuit breakers: Room ID -> CircuitBreaker (per-room failure protection)
     private final Map<String, CircuitBreaker> circuitBreakers = new ConcurrentHashMap<>();
 
+    private final MessageConsumerManager consumerManager;
+
     private static class SingletonHolder {
         private static final RoomManager INSTANCE = new RoomManager();
     }
@@ -41,6 +44,7 @@ public class RoomManager {
 
     private RoomManager() {
         // Private constructor for singleton
+        this.consumerManager = MessageConsumerManager.getInstance();
     }
 
     /**
@@ -48,6 +52,8 @@ public class RoomManager {
      * Expects userId in session properties.
      */
     public void addSession(Session session, String roomId) {
+        boolean wasEmpty = getRoomSessionCount(roomId) == 0;
+
         roomSessions.computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet()).add(session);
 
         // Enhanced user tracking
@@ -60,6 +66,10 @@ public class RoomManager {
             logger.debug("Added user {} (session {}) to room {}", userId, session.getId(), roomId);
         } else {
             logger.warn("Session {} connected without userId to room {}", session.getId(), roomId);
+        }
+
+        if (wasEmpty) {
+            consumerManager.startConsumerForRoom(roomId);
         }
     }
 
@@ -92,6 +102,7 @@ public class RoomManager {
                 // Remove circuit breaker for empty room to free memory
                 circuitBreakers.remove(roomId);
                 logger.info("Cleaned up empty room {} and circuit breaker", roomId);
+                consumerManager.stopConsumerForRoom(roomId);
             }
         }
 
@@ -195,7 +206,10 @@ public class RoomManager {
         for (Session session : sessions) {
             try {
                 if (session.isOpen()) {
-                    session.getBasicRemote().sendText(messageJson);
+                    // Synchronize on the BasicRemote object to prevent concurrent writes
+                    synchronized (session.getBasicRemote()) {
+                        session.getBasicRemote().sendText(messageJson);
+                    }
                     deliveredToSessions++;
                 } else {
                     logger.debug("Skipping closed session {} in room {}", session.getId(), roomId);

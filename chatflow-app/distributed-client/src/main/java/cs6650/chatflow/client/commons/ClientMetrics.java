@@ -94,45 +94,10 @@ public class ClientMetrics {
     }
 
     /**
-     * Get messages sent.
-     */
-    public long getMessagesSent() {
-        return messagesSent.get();
-    }
-
-    /**
-     * Get messages received.
-     */
-    public long getMessagesReceived() {
-        return messagesReceived.get();
-    }
-
-    /**
-     * Get messages acknowledged.
-     */
-    public long getMessagesAcked() {
-        return messagesAcked.get();
-    }
-
-    /**
      * Get connection failures.
      */
     public int getConnectionFailures() {
         return connectionFailures.get();
-    }
-
-    /**
-     * Get retry count.
-     */
-    public int getRetryCount() {
-        return retryCount.get();
-    }
-
-    /**
-     * Check if all sent messages have been acknowledged.
-     */
-    public boolean areAllMessagesAcked() {
-        return messagesAcked.get() >= messagesSent.get();
     }
 
     /**

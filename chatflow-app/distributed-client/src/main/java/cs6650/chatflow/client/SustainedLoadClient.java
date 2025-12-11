@@ -130,15 +130,12 @@ public class SustainedLoadClient {
     private void initializeConnections() {
         System.out.println("Initializing connection pools...");
 
-        // ========== UPDATED: Use new constructor with null ACK handler ==========
-        // SustainedLoadClient doesn't handle ACK confirmations, so pass null
         producerConnectionPool = new ProducerConnectionPool(
                 producerHost,
                 producerPort,
-                Constants.PRODUCER_SERVER_PATH,
-                null  // No ACK confirmation handler for sustained load test
+                Constants.PRODUCER_SERVER_PATH
+                // NO 4th parameter
         );
-        // ========================================================================
 
         System.out.println("✅ Producer connection pool initialized");
 

@@ -1,5 +1,6 @@
 package cs6650.chatflow.client.workers;
 
+import cs6650.chatflow.client.DistributedClient;
 import cs6650.chatflow.client.commons.ClientMetrics;
 import cs6650.chatflow.client.connection.ProducerConnectionPool;
 import cs6650.chatflow.client.connection.ProducerWebSocketClient;
@@ -12,14 +13,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Worker thread that sends messages from the message queue to the producer server.
- * Tracks pending messages awaiting ACK confirmation.
+ * Worker thread that sends messages to the producer server.
  */
-public class MessageSenderWorker implements Runnable {
+public class MessageSenderWorker implements Runnable, DistributedClient.Stoppable {
 
     private static final Logger logger = LoggerFactory.getLogger(MessageSenderWorker.class);
 
@@ -27,46 +26,41 @@ public class MessageSenderWorker implements Runnable {
     private final ProducerConnectionPool connectionPool;
     private final AtomicLong messagesSent;
     private final Set<String> sentMessageIds;
-    private final ConcurrentHashMap<String, Long> pendingMessages;  // NEW
     private final ClientMetrics metrics;
     private final Gson gson;
+    private volatile boolean running = true;
+    private Thread workerThread;
 
     public MessageSenderWorker(MessageQueue messageQueue,
                                ProducerConnectionPool connectionPool,
                                AtomicLong messagesSent,
                                Set<String> sentMessageIds,
-                               ConcurrentHashMap<String, Long> pendingMessages,  // NEW
                                ClientMetrics metrics,
                                Gson gson) {
         this.messageQueue = messageQueue;
         this.connectionPool = connectionPool;
         this.messagesSent = messagesSent;
         this.sentMessageIds = sentMessageIds;
-        this.pendingMessages = pendingMessages;
         this.metrics = metrics;
         this.gson = gson;
     }
 
     @Override
     public void run() {
+        this.workerThread = Thread.currentThread();
         try {
-            while (!Thread.currentThread().isInterrupted()) {
+            while (running) {
                 MessageQueueEntry entry = messageQueue.take();
                 ChatMessage message = entry.getMessage();
                 String roomId = entry.getRoomId();
 
-                // Track that we sent this message
                 sentMessageIds.add(message.getMessageId());
-
-                // ========== NEW: Track as pending (awaiting ACK confirmation) ==========
-                pendingMessages.put(message.getMessageId(), System.currentTimeMillis());
-                // =======================================================================
-
                 sendMessage(message, roomId);
             }
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.debug("Sender worker interrupted, shutting down");
+            if (running) {
+                logger.debug("Sender worker interrupted, shutting down");
+            }
         }
     }
 
@@ -83,18 +77,18 @@ public class MessageSenderWorker implements Runnable {
             } catch (Exception e) {
                 metrics.recordConnectionFailure();
                 logger.error("Failed to send message to room {}: {}", roomId, e.getMessage());
-
-                // ========== NEW: Remove from pending on failure ==========
-                pendingMessages.remove(message.getMessageId());
-                // =========================================================
             }
         } else {
             metrics.recordConnectionFailure();
             logger.warn("No open connection available for room {}", roomId);
+        }
+    }
 
-            // ========== NEW: Remove from pending on failure ==========
-            pendingMessages.remove(message.getMessageId());
-            // =========================================================
+    @Override
+    public void stop() {
+        running = false;
+        if (workerThread != null) {
+            workerThread.interrupt();
         }
     }
 }

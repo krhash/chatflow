@@ -546,6 +546,11 @@ public class DynamoDBService implements DatabaseService {
         return "DynamoDB";
     }
 
+    @Override
+    public DynamoDB getDynamoDB() {
+        return dynamoDB;
+    }
+
     // ========== Helper Methods ==========
 
     private ChatEvent itemToChatEvent(Item item) {

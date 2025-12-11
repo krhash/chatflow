@@ -10,11 +10,6 @@ public final class Constants {
     // ========== MESSAGE TYPES ==========
     public static final String[] MESSAGE_TYPES = {"TEXT", "JOIN", "LEAVE", "ACK"};
 
-    // ========== NEW: ACK Confirmation Type ==========
-    public static final String MESSAGE_TYPE_ACK = "ACK";
-    public static final String MESSAGE_TYPE_ACK_CONFIRMATION = "ACK_CONFIRMATION";
-    // ================================================
-
     // ========== VALIDATION REGEX PATTERNS ==========
     public static final String USERNAME_REGEX = "[a-zA-Z0-9]{3,20}";
 

@@ -3,18 +3,23 @@ package cs6650.chatflow.consumer.messaging;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
-import cs6650.chatflow.consumer.database.DatabaseService;
+import cs6650.chatflow.consumer.cache.ValkeyCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeoutException;
 
 /**
  * Manages a pool of message consumers for all room queues.
  * Creates and manages consumer threads for each room (1-20).
+ *
+ * Updated for separated concerns:
+ * - Consumers write ONLY to cache
+ * - Database writes handled by separate CacheDBWriterService
  */
 public class MessageConsumerManager {
     private static final Logger logger = LoggerFactory.getLogger(MessageConsumerManager.class);
@@ -22,8 +27,10 @@ public class MessageConsumerManager {
     // Maps room ID to consumer
     private final Map<String, RoomMessageConsumer> consumers = new ConcurrentHashMap<>();
     private Connection connection;
+    private Channel channel;
     private boolean started = false;
-    private DatabaseService databaseService;  // ← NEW: Database service reference
+    private ValkeyCacheService cacheService;
+    private ExecutorService messageProcessingExecutor;
 
     private static class SingletonHolder {
         private static final MessageConsumerManager INSTANCE = new MessageConsumerManager();
@@ -39,15 +46,18 @@ public class MessageConsumerManager {
 
     /**
      * Initializes the connection and starts all room consumers.
-     * ← UPDATED: Now accepts DatabaseService parameter
+     * Now only requires ValkeyCacheService (database handled separately)
+     *
+     * @param cacheService Valkey cache service for fast writes
      */
-    public synchronized void start(DatabaseService databaseService) {
+    public synchronized void start(ValkeyCacheService cacheService, ExecutorService messageProcessingExecutor) {
         if (started) {
             logger.warn("MessageConsumerManager already started");
             return;
         }
 
-        this.databaseService = databaseService;  // ← NEW: Store database service
+        this.cacheService = cacheService;
+        this.messageProcessingExecutor = messageProcessingExecutor;
 
         try {
             logger.info("Initializing MessageConsumerManager");
@@ -61,35 +71,57 @@ public class MessageConsumerManager {
             factory.setVirtualHost(RabbitMQConfig.getVirtualHost());
             factory.setConnectionTimeout(RabbitMQConfig.getConnectionTimeout());
 
-            logger.info("Connecting to RabbitMQ at {}:{}", RabbitMQConfig.getHost(), RabbitMQConfig.getPort());
+            logger.info("Connecting to RabbitMQ at {}:{}",
+                    RabbitMQConfig.getHost(), RabbitMQConfig.getPort());
             connection = factory.newConnection();
-            logger.info("Connected to RabbitMQ successfully");
-
-            // Start consumer for each room (1-20)
-            for (int roomId = 1; roomId <= 20; roomId++) {
-                String roomIdStr = String.valueOf(roomId);
-                try {
-                    Channel channel = connection.createChannel();
-
-                    // ← UPDATED: Pass databaseService to consumer
-                    RoomMessageConsumer consumer = new RoomMessageConsumer(roomIdStr, channel, databaseService);
-                    consumer.startConsuming();
-                    consumers.put(roomIdStr, consumer);
-                    logger.info("Started consumer for room {} with database persistence", roomIdStr);
-                } catch (Exception e) {
-                    logger.error("Failed to start consumer for room {}", roomIdStr, e);
-                    // Continue with other rooms
-                }
-            }
+            channel = connection.createChannel();
+            logger.info("Connected to RabbitMQ successfully and created a channel");
 
             started = true;
-            logger.info("Started {} room consumers with database integration", consumers.size());
+            logger.info("✅ MessageConsumerManager initialized and ready for lazy subscriptions");
 
         } catch (IOException | TimeoutException e) {
             logger.error("Failed to initialize MessageConsumerManager", e);
             throw new RuntimeException("Failed to initialize MessageConsumerManager", e);
         }
     }
+
+    public synchronized void startConsumerForRoom(String roomId) {
+        if (!started) {
+            logger.warn("MessageConsumerManager not started, cannot start consumer for room {}", roomId);
+            return;
+        }
+        if (consumers.containsKey(roomId)) {
+            logger.debug("Consumer for room {} is already running.", roomId);
+            return;
+        }
+
+        try {
+            RoomMessageConsumer consumer = new RoomMessageConsumer(
+                    roomId,
+                    channel,
+                    cacheService,
+                    messageProcessingExecutor
+            );
+            consumer.startConsuming();
+            consumers.put(roomId, consumer);
+            logger.info("✅ Lazily started consumer for room {}", roomId);
+        } catch (Exception e) {
+            logger.error("Failed to start consumer for room {}", roomId, e);
+        }
+    }
+
+    public synchronized void stopConsumerForRoom(String roomId) {
+        if (!started) {
+            return;
+        }
+        RoomMessageConsumer consumer = consumers.remove(roomId);
+        if (consumer != null) {
+            consumer.stopConsuming();
+            logger.info("✅ Lazily stopped consumer for room {}", roomId);
+        }
+    }
+
 
     /**
      * Stops all consumers and closes the connection.
