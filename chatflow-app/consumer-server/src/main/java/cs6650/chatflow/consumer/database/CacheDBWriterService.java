@@ -198,7 +198,7 @@ public class CacheDBWriterService {
     }
 
     /**
-     * Poll messages from cache using SCAN
+     * Poll messages from cache using SCAN and MGET for efficiency.
      */
     private List<CachedMessage> pollMessagesFromCache(int limit) {
         List<CachedMessage> messages = new ArrayList<>();
@@ -206,14 +206,19 @@ public class CacheDBWriterService {
             String pattern = "chatflow:msg:*";
             List<String> keys = cacheService.scanKeys(pattern, limit);
 
-            for (String key : keys) {
-                if (messages.size() >= limit) {
-                    break;
-                }
-                String messageId = key.replace("chatflow:msg:", "");
-                ChatEvent event = cacheService.getMessage(messageId);
-                if (event != null) {
-                    messages.add(new CachedMessage(key, messageId, event));
+            if (keys.isEmpty()) {
+                return messages;
+            }
+
+            List<String> messageIds = keys.stream()
+                    .map(k -> k.replace("chatflow:msg:", ""))
+                    .collect(Collectors.toList());
+
+            List<ChatEvent> events = cacheService.getMessages(messageIds);
+
+            for (int i = 0; i < keys.size(); i++) {
+                if (i < events.size() && events.get(i) != null) {
+                    messages.add(new CachedMessage(keys.get(i), messageIds.get(i), events.get(i)));
                 }
             }
         } catch (Exception e) {
@@ -292,19 +297,20 @@ public class CacheDBWriterService {
     }
 
     /**
-     * Remove messages from cache
+     * Remove messages from cache using a single batch operation.
      */
     private void removeFromCache(List<String> keys) {
-        for (String key : keys) {
-            try {
-                String messageId = key.replace("chatflow:msg:", "");
-                boolean deleted = cacheService.deleteMessage(messageId);
-                if (deleted) {
-                    totalRemoved.incrementAndGet();
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to remove key {} from cache: {}", key, e.getMessage());
-            }
+        if (keys == null || keys.isEmpty()) {
+            return;
+        }
+        try {
+            List<String> messageIds = keys.stream()
+                    .map(k -> k.replace("chatflow:msg:", ""))
+                    .collect(Collectors.toList());
+            long deletedCount = cacheService.deleteMessages(messageIds);
+            totalRemoved.addAndGet(deletedCount);
+        } catch (Exception e) {
+            logger.warn("Failed to remove keys from cache: {}", e.getMessage());
         }
     }
 
@@ -338,7 +344,7 @@ public class CacheDBWriterService {
         return totalProcessed.get();
     }
 
-public long getTotalSuccessful() {
+    public long getTotalSuccessful() {
         return totalSuccessful.get();
     }
 
