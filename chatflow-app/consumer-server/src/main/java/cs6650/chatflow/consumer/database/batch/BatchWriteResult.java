@@ -41,6 +41,10 @@ public class BatchWriteResult {
         successful++;
     }
 
+    public void addSuccessful(int count) {
+        this.successful += count;
+    }
+
     /**
      * Increment duplicate write count (not a failure!)
      */
@@ -53,6 +57,10 @@ public class BatchWriteResult {
      */
     public void incrementFailed() {
         failed++;
+    }
+
+    public void addFailed(int count) {
+        this.failed += count;
     }
 
     /**

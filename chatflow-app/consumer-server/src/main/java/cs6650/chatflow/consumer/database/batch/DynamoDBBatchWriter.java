@@ -1,14 +1,14 @@
 package cs6650.chatflow.consumer.database.batch;
 
 import com.amazonaws.services.dynamodbv2.document.*;
-import com.amazonaws.services.dynamodbv2.document.spec.PutItemSpec;
-import com.amazonaws.services.dynamodbv2.model.*;
+import com.amazonaws.services.dynamodbv2.model.WriteRequest;
 import cs6650.chatflow.consumer.database.model.DatabaseMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * DynamoDB-specific implementation of batch writer with deduplication support.
@@ -36,98 +36,57 @@ public class DynamoDBBatchWriter implements DatabaseBatchWriter {
 
     @Override
     public BatchWriteResult writeBatch(List<DatabaseMessage> messages) throws Exception {
-        BatchWriteResult result = new BatchWriteResult();
-        Table table = dynamoDB.getTable(tableName);
-
-        for (DatabaseMessage message : messages) {
-            try {
-                Item item = convertToItem(message);
-
-                // Use conditional write to prevent duplicates
-                PutItemSpec spec = new PutItemSpec()
-                        .withItem(item)
-                        .withConditionExpression("attribute_not_exists(message_id)");
-
-                table.putItem(spec);
-
-                result.incrementSuccessful();
-                logger.trace("Successfully wrote message: {}", message.getMessageId());
-
-            } catch (ConditionalCheckFailedException e) {
-                // Message already exists - this is NOT an error in multi-instance setup
-                result.incrementDuplicate();
-                logger.debug("Duplicate message prevented: {} (already exists in database)",
-                        message.getMessageId());
-
-            } catch (ProvisionedThroughputExceededException e) {
-                // Throughput exceeded - retry with backoff
-                boolean retried = retryWithBackoff(table, message, result);
-                if (!retried) {
-                    result.incrementFailed();
-                    result.addFailedMessage(message);
-                    logger.error("Failed to write message {} after retries: throughput exceeded",
-                            message.getMessageId());
-                }
-
-            } catch (Exception e) {
-                // Genuine error - mark as failed
-                result.incrementFailed();
-                result.addFailedMessage(message);
-                logger.error("Failed to write message {}: {}",
-                        message.getMessageId(), e.getMessage(), e);
-            }
+        BatchWriteResult finalResult = new BatchWriteResult();
+        if (messages == null || messages.isEmpty()) {
+            return finalResult;
         }
 
-        logBatchResult(result);
-        return result;
+        TableWriteItems tableWriteItems = new TableWriteItems(tableName);
+        for (DatabaseMessage message : messages) {
+            Item item = convertToItem(message);
+            tableWriteItems.addItemToPut(item);
+        }
+
+        BatchWriteItemOutcome outcome = dynamoDB.batchWriteItem(tableWriteItems);
+        handleOutcome(outcome, finalResult, messages, 1);
+
+        logBatchResult(finalResult);
+        return finalResult;
     }
 
-    /**
-     * Retry write with exponential backoff for throughput exceptions
-     */
-    private boolean retryWithBackoff(Table table, DatabaseMessage message, BatchWriteResult result) {
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+    private void handleOutcome(BatchWriteItemOutcome outcome, BatchWriteResult result, List<DatabaseMessage> originalMessages, int attempt) {
+        int successfulWrites = originalMessages.size() - outcome.getUnprocessedItems().size();
+        result.addSuccessful(successfulWrites);
+
+        Map<String, List<WriteRequest>> unprocessedItems = outcome.getUnprocessedItems();
+        if (!unprocessedItems.isEmpty() && attempt <= maxRetries) {
+            logger.warn("Batch write had {} unprocessed items. Retrying (attempt {}/{}) after {}ms...",
+                    unprocessedItems.get(tableName).size(), attempt, maxRetries, retryDelayMs * attempt);
+
             try {
-                long delay = retryDelayMs * (long) Math.pow(2, attempt - 1);
-                Thread.sleep(delay);
-
-                logger.debug("Retrying write for message {} (attempt {}/{})",
-                        message.getMessageId(), attempt, maxRetries);
-
-                Item item = convertToItem(message);
-                PutItemSpec spec = new PutItemSpec()
-                        .withItem(item)
-                        .withConditionExpression("attribute_not_exists(message_id)");
-
-                table.putItem(spec);
-
-                result.incrementSuccessful();
-                logger.debug("Successfully wrote message {} on retry attempt {}",
-                        message.getMessageId(), attempt);
-                return true;
-
-            } catch (ConditionalCheckFailedException e) {
-                // Duplicate - not a failure
-                result.incrementDuplicate();
-                logger.debug("Duplicate detected on retry for message: {}", message.getMessageId());
-                return true;
-
+                Thread.sleep(retryDelayMs * attempt);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                logger.error("Retry interrupted for message {}", message.getMessageId());
-                return false;
-
-            } catch (Exception e) {
-                logger.warn("Retry attempt {} failed for message {}: {}",
-                        attempt, message.getMessageId(), e.getMessage());
-
-                if (attempt == maxRetries) {
-                    return false;
-                }
+                logger.error("Retry interrupted.");
+                // Add all unprocessed to failed list
+                unprocessedItems.get(tableName).forEach(req -> {
+                    result.incrementFailed();
+                    // This part is tricky as we don't have the original message object easily.
+                    // For simplicity, we'll just count them as failed.
+                });
+                return;
             }
+
+            BatchWriteItemOutcome retryOutcome = dynamoDB.batchWriteItemUnprocessed(unprocessedItems);
+            handleOutcome(retryOutcome, result, originalMessages, attempt + 1);
+        } else if (!unprocessedItems.isEmpty()) {
+            int failedCount = unprocessedItems.get(tableName).size();
+            result.addFailed(failedCount);
+            result.addSuccessful(-failedCount); // Adjust success count
+            logger.error("Permanently failed to write {} items after {} retries.", failedCount, maxRetries);
         }
-        return false;
     }
+
 
     /**
      * Convert DatabaseMessage to DynamoDB Item

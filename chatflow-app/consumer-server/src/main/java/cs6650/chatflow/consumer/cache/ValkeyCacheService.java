@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
+import redis.clients.jedis.Pipeline;
+import redis.clients.jedis.Response;
 import redis.clients.jedis.exceptions.JedisException;
 import redis.clients.jedis.params.SetParams;
 import redis.clients.jedis.params.ScanParams;
@@ -15,6 +17,7 @@ import redis.clients.jedis.resps.ScanResult;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * Enhanced Valkey cache service with atomic deduplication support.
@@ -279,7 +282,7 @@ public class ValkeyCacheService {
     }
 
     /**
-     * Get multiple messages at once (batch operation)
+     * Get multiple messages at once using a pipeline (cluster-safe).
      */
     public List<ChatEvent> getMessages(List<String> messageIds) {
         if (!initialized || messageIds == null || messageIds.isEmpty()) {
@@ -287,15 +290,17 @@ public class ValkeyCacheService {
         }
 
         List<ChatEvent> events = new ArrayList<>();
-
         try (Jedis jedis = jedisPool.getResource()) {
-            String[] keys = messageIds.stream()
-                    .map(id -> ValkeyConfig.getKeyPrefix() + id)
-                    .toArray(String[]::new);
+            Pipeline pipeline = jedis.pipelined();
+            List<Response<String>> responses = new ArrayList<>();
 
-            List<String> values = jedis.mget(keys);
+            for (String id : messageIds) {
+                responses.add(pipeline.get(ValkeyConfig.getKeyPrefix() + id));
+            }
+            pipeline.sync();
 
-            for (String jsonValue : values) {
+            for (Response<String> response : responses) {
+                String jsonValue = response.get();
                 if (jsonValue != null) {
                     try {
                         ChatEvent event = gson.fromJson(jsonValue, ChatEvent.class);
@@ -309,14 +314,11 @@ public class ValkeyCacheService {
                     events.add(null);
                 }
             }
-
             totalReads.addAndGet(messageIds.size());
-
         } catch (Exception e) {
             logger.error("Failed to get batch messages: {}", e.getMessage());
             failedReads.addAndGet(messageIds.size());
         }
-
         return events;
     }
 
@@ -342,26 +344,31 @@ public class ValkeyCacheService {
     }
 
     /**
-     * Delete multiple messages at once (batch operation)
+     * Delete multiple messages at once using a pipeline (cluster-safe).
      */
     public long deleteMessages(List<String> messageIds) {
         if (!initialized || messageIds == null || messageIds.isEmpty()) {
             return 0;
         }
 
+        long deletedCount = 0;
         try (Jedis jedis = jedisPool.getResource()) {
-            String[] keys = messageIds.stream()
-                    .map(id -> ValkeyConfig.getKeyPrefix() + id)
-                    .toArray(String[]::new);
+            Pipeline pipeline = jedis.pipelined();
+            List<Response<Long>> responses = new ArrayList<>();
 
-            Long deleted = jedis.del(keys);
-            logger.debug("Batch deleted {} messages from cache", deleted);
-            return deleted;
+            for (String id : messageIds) {
+                responses.add(pipeline.del(ValkeyConfig.getKeyPrefix() + id));
+            }
+            pipeline.sync();
 
+            for (Response<Long> response : responses) {
+                deletedCount += response.get();
+            }
+            logger.debug("Batch deleted {} messages from cache", deletedCount);
         } catch (Exception e) {
             logger.error("Failed to batch delete messages: {}", e.getMessage());
-            return 0;
         }
+        return deletedCount;
     }
 
     /**
